@@ -1,0 +1,1040 @@
+openapi: 3.1.0
+info:
+  title: Obsrv API - E-commerce Monitoring System
+  description: |
+    REST API for monitoring e-commerce websites and tracking product price/stock changes.
+
+    ## Authentication
+    All endpoints require API key authentication via `X-API-Key` header or `api_key` query parameter.
+
+    ## Webhooks
+    Change notifications are delivered via HMAC-authenticated webhooks to client-specified endpoints.
+  version: 1.0.0
+  contact:
+    name: Obsrv API Support
+    email: support@obsrv.example.com
+  license:
+    name: Proprietary
+
+servers:
+  - url: https://api.obsrv.example.com/v1
+    description: Production server
+  - url: http://localhost:8000/v1
+    description: Local development server
+
+security:
+  - ApiKeyHeader: []
+  - ApiKeyQuery: []
+
+tags:
+  - name: websites
+    description: Website registration and management
+  - name: products
+    description: Product queries and history
+  - name: auth
+    description: API key management
+  - name: health
+    description: Health and status endpoints
+
+paths:
+  # Website Management Endpoints
+  /websites:
+    post:
+      tags: [websites]
+      summary: Register a new website for monitoring
+      description: |
+        Register an e-commerce website for monitoring by providing base URL and seed URLs for product discovery.
+        The system will perform product discovery and return discovered products for client approval.
+      operationId: registerWebsite
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/WebsiteRegistrationRequest'
+            examples:
+              withCategorySeeds:
+                summary: Register with category seed URLs
+                value:
+                  base_url: "https://example-shop.com"
+                  seed_urls: ["https://example-shop.com/category/electronics", "https://example-shop.com/category/laptops"]
+                  crawl_frequency_minutes: 1440
+                  price_change_threshold_pct: 1.0
+                  webhook_endpoint_url: "https://client-erp.example.com/webhooks/obsrv"
+              withProductSeeds:
+                summary: Register with direct product URLs
+                value:
+                  base_url: "https://example-shop.com"
+                  seed_urls: ["https://example-shop.com/products/laptop-xyz", "https://example-shop.com/products/monitor-abc"]
+                  crawl_frequency_minutes: 720
+                  price_change_threshold_pct: 0.5
+      responses:
+        '202':
+          description: Website registration accepted, product discovery initiated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WebsiteRegistrationResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '409':
+          description: Website already registered for this client
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+    get:
+      tags: [websites]
+      summary: List monitored websites
+      description: Retrieve all websites registered by the authenticated client
+      operationId: listWebsites
+      parameters:
+        - $ref: '#/components/parameters/PageParam'
+        - $ref: '#/components/parameters/PageSizeParam'
+        - name: status
+          in: query
+          description: Filter by website status
+          schema:
+            $ref: '#/components/schemas/WebsiteStatus'
+      responses:
+        '200':
+          description: List of monitored websites
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  websites:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Website'
+                  pagination:
+                    $ref: '#/components/schemas/Pagination'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /websites/{website_id}:
+    get:
+      tags: [websites]
+      summary: Get website details
+      description: Retrieve detailed information about a specific monitored website
+      operationId: getWebsite
+      parameters:
+        - $ref: '#/components/parameters/WebsiteIdParam'
+      responses:
+        '200':
+          description: Website details
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Website'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+    patch:
+      tags: [websites]
+      summary: Update website configuration
+      description: Update monitoring configuration for a registered website
+      operationId: updateWebsite
+      parameters:
+        - $ref: '#/components/parameters/WebsiteIdParam'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/WebsiteUpdateRequest'
+      responses:
+        '200':
+          description: Website updated successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Website'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+    delete:
+      tags: [websites]
+      summary: Delete monitored website
+      description: Remove website from monitoring and delete all associated data
+      operationId: deleteWebsite
+      parameters:
+        - $ref: '#/components/parameters/WebsiteIdParam'
+      responses:
+        '204':
+          description: Website deleted successfully
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /websites/{website_id}/discovered-products:
+    get:
+      tags: [websites]
+      summary: Get discovered products pending approval
+      description: Retrieve products discovered from seed URLs awaiting client approval
+      operationId: getDiscoveredProducts
+      parameters:
+        - $ref: '#/components/parameters/WebsiteIdParam'
+      responses:
+        '200':
+          description: Discovered products list
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  discovered_products:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/DiscoveredProduct'
+                  total_discovered:
+                    type: integer
+                  max_selectable:
+                    type: integer
+                    description: Maximum products allowed (from client quota)
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /websites/{website_id}/approve-products:
+    post:
+      tags: [websites]
+      summary: Approve products for monitoring
+      description: Select discovered products to monitor (up to quota limit)
+      operationId: approveProducts
+      parameters:
+        - $ref: '#/components/parameters/WebsiteIdParam'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [product_urls]
+              properties:
+                product_urls:
+                  type: array
+                  items:
+                    type: string
+                    format: uri
+                  maxItems: 100
+                  description: List of product URLs to approve for monitoring
+            example:
+              product_urls:
+                - "https://example-shop.com/products/laptop-xyz"
+                - "https://example-shop.com/products/monitor-abc"
+      responses:
+        '200':
+          description: Products approved, baseline crawl initiated
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  approved_count:
+                    type: integer
+                  baseline_crawl_id:
+                    type: string
+                    format: uuid
+                  message:
+                    type: string
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /websites/{website_id}/crawl-logs:
+    get:
+      tags: [websites]
+      summary: Get crawl execution logs
+      description: Retrieve crawl history and execution status for a website
+      operationId: getCrawlLogs
+      parameters:
+        - $ref: '#/components/parameters/WebsiteIdParam'
+        - $ref: '#/components/parameters/PageParam'
+        - $ref: '#/components/parameters/PageSizeParam'
+        - name: status
+          in: query
+          description: Filter by crawl status
+          schema:
+            $ref: '#/components/schemas/CrawlStatus'
+      responses:
+        '200':
+          description: Crawl execution logs
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  crawl_logs:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/CrawlLog'
+                  pagination:
+                    $ref: '#/components/schemas/Pagination'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  # Product Endpoints
+  /products:
+    get:
+      tags: [products]
+      summary: List all monitored products
+      description: Retrieve all products monitored across all client websites
+      operationId: listProducts
+      parameters:
+        - name: website_id
+          in: query
+          description: Filter by website ID
+          schema:
+            type: string
+            format: uuid
+        - name: stock_status
+          in: query
+          description: Filter by stock status
+          schema:
+            $ref: '#/components/schemas/StockStatus'
+        - $ref: '#/components/parameters/PageParam'
+        - $ref: '#/components/parameters/PageSizeParam'
+      responses:
+        '200':
+          description: List of monitored products
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  products:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Product'
+                  pagination:
+                    $ref: '#/components/schemas/Pagination'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /products/{product_id}:
+    get:
+      tags: [products]
+      summary: Get product details
+      description: Retrieve detailed information about a specific product
+      operationId: getProduct
+      parameters:
+        - $ref: '#/components/parameters/ProductIdParam'
+      responses:
+        '200':
+          description: Product details
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Product'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /products/{product_id}/history:
+    get:
+      tags: [products]
+      summary: Get product price/stock history
+      description: Retrieve historical snapshots of product data within specified date range
+      operationId: getProductHistory
+      parameters:
+        - $ref: '#/components/parameters/ProductIdParam'
+        - name: start_date
+          in: query
+          description: Start date for history range (ISO 8601)
+          schema:
+            type: string
+            format: date-time
+        - name: end_date
+          in: query
+          description: End date for history range (ISO 8601)
+          schema:
+            type: string
+            format: date-time
+        - $ref: '#/components/parameters/PageParam'
+        - $ref: '#/components/parameters/PageSizeParam'
+      responses:
+        '200':
+          description: Product history snapshots
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  product_id:
+                    type: string
+                    format: uuid
+                  history:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/ProductHistoryRecord'
+                  pagination:
+                    $ref: '#/components/schemas/Pagination'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  # Authentication Endpoints
+  /auth/keys:
+    post:
+      tags: [auth]
+      summary: Generate new API key
+      description: |
+        Create a new API key for the authenticated client. The key is returned only once.
+        Requires authentication with an existing API key having 'admin' permission scope.
+      operationId: generateApiKey
+      security:
+        - ApiKeyHeader: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                description:
+                  type: string
+                  description: Optional description for the API key
+                permissions_scope:
+                  type: array
+                  items:
+                    type: string
+                    enum: [read, write, admin]
+                  default: [read, write]
+            example:
+              description: "Production ERP integration key"
+              permissions_scope: ["read", "write"]
+      responses:
+        '201':
+          description: API key created successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [api_key, key_id, created_at]
+                properties:
+                  api_key:
+                    type: string
+                    description: The generated API key (only shown once)
+                    example: "obsrv_live_a1b2c3d4e5f6g7h8i9j0k1l2m3n4o5p6q7r8"
+                  key_id:
+                    type: string
+                    format: uuid
+                  key_prefix:
+                    type: string
+                    description: First 8 characters for identification
+                    example: "obsrv_li"
+                  created_at:
+                    type: string
+                    format: date-time
+                  permissions_scope:
+                    type: array
+                    items:
+                      type: string
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          description: Insufficient permissions (requires 'admin' scope)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+    get:
+      tags: [auth]
+      summary: List API keys
+      description: Retrieve metadata for all active API keys (does not expose key values)
+      operationId: listApiKeys
+      security:
+        - ApiKeyHeader: []
+      responses:
+        '200':
+          description: List of API keys
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  api_keys:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/ApiKeyMetadata'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /auth/keys/{key_id}:
+    delete:
+      tags: [auth]
+      summary: Invalidate API key
+      description: Immediately invalidate an API key, preventing all further use
+      operationId: invalidateApiKey
+      security:
+        - ApiKeyHeader: []
+      parameters:
+        - name: key_id
+          in: path
+          required: true
+          description: API key identifier
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '204':
+          description: API key invalidated successfully
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /auth/webhook-secret:
+    post:
+      tags: [auth]
+      summary: Rotate webhook secret
+      description: |
+        Generate new webhook signing secret. Previous secret remains valid for 1 hour grace period.
+        Clients must update webhook verification to use new secret within grace period.
+      operationId: rotateWebhookSecret
+      security:
+        - ApiKeyHeader: []
+      responses:
+        '200':
+          description: Webhook secret rotated successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [new_secret, grace_period_expires_at]
+                properties:
+                  new_secret:
+                    type: string
+                    description: New webhook signing secret (shown only once)
+                  grace_period_expires_at:
+                    type: string
+                    format: date-time
+                    description: Timestamp when old secret stops being accepted
+                  message:
+                    type: string
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  # Health Endpoints
+  /health:
+    get:
+      tags: [health]
+      summary: Health check
+      description: Basic health check endpoint (no authentication required)
+      operationId: healthCheck
+      security: []
+      responses:
+        '200':
+          description: Service is healthy
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    enum: [healthy]
+                  timestamp:
+                    type: string
+                    format: date-time
+
+  /health/detailed:
+    get:
+      tags: [health]
+      summary: Detailed health check
+      description: Detailed health status including database, Redis, and Celery worker status
+      operationId: detailedHealthCheck
+      security:
+        - ApiKeyHeader: []
+      responses:
+        '200':
+          description: Detailed health status
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    enum: [healthy, degraded, unhealthy]
+                  timestamp:
+                    type: string
+                    format: date-time
+                  components:
+                    type: object
+                    properties:
+                      database:
+                        $ref: '#/components/schemas/ComponentHealth'
+                      redis:
+                        $ref: '#/components/schemas/ComponentHealth'
+                      celery_workers:
+                        $ref: '#/components/schemas/ComponentHealth'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '503':
+          description: Service unhealthy
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+# Component Schemas
+components:
+  securitySchemes:
+    ApiKeyHeader:
+      type: apiKey
+      in: header
+      name: X-API-Key
+      description: API key authentication via header
+    ApiKeyQuery:
+      type: apiKey
+      in: query
+      name: api_key
+      description: API key authentication via query parameter (less secure, use header when possible)
+
+  parameters:
+    WebsiteIdParam:
+      name: website_id
+      in: path
+      required: true
+      description: Monitored website identifier
+      schema:
+        type: string
+        format: uuid
+
+    ProductIdParam:
+      name: product_id
+      in: path
+      required: true
+      description: Product identifier
+      schema:
+        type: string
+        format: uuid
+
+    PageParam:
+      name: page
+      in: query
+      description: Page number (1-indexed)
+      schema:
+        type: integer
+        minimum: 1
+        default: 1
+
+    PageSizeParam:
+      name: page_size
+      in: query
+      description: Number of items per page
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 500
+        default: 50
+
+  responses:
+    BadRequest:
+      description: Invalid request parameters
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+
+    Unauthorized:
+      description: Missing or invalid API key
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          example:
+            error: "Unauthorized"
+            message: "Invalid or missing API key"
+            timestamp: "2025-11-03T10:00:00Z"
+
+    NotFound:
+      description: Resource not found
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+
+  schemas:
+    # Request/Response Schemas
+    WebsiteRegistrationRequest:
+      type: object
+      required: [base_url, seed_urls]
+      properties:
+        base_url:
+          type: string
+          format: uri
+          description: E-commerce website base URL
+        seed_urls:
+          type: array
+          items:
+            type: string
+            format: uri
+          minItems: 1
+          description: Seed URLs for product discovery (category or product pages)
+        crawl_frequency_minutes:
+          type: integer
+          enum: [360, 480, 720, 1440]
+          default: 1440
+          description: Crawl interval (360=6h, 480=8h, 720=12h, 1440=24h)
+        price_change_threshold_pct:
+          type: number
+          format: float
+          minimum: 0.01
+          maximum: 100.0
+          default: 1.0
+          description: Minimum price change percentage to trigger notification
+        retention_days:
+          type: integer
+          minimum: 30
+          maximum: 365
+          default: 90
+          description: Historical data retention period
+        webhook_endpoint_url:
+          type: string
+          format: uri
+          description: HTTPS endpoint for webhook notifications
+        webhook_enabled:
+          type: boolean
+          default: true
+          description: Enable webhook delivery
+
+    WebsiteRegistrationResponse:
+      type: object
+      required: [website_id, status, message]
+      properties:
+        website_id:
+          type: string
+          format: uuid
+        status:
+          type: string
+          enum: [pending_approval]
+        message:
+          type: string
+        discovery_job_id:
+          type: string
+          format: uuid
+          description: Background job ID for product discovery
+
+    WebsiteUpdateRequest:
+      type: object
+      properties:
+        crawl_frequency_minutes:
+          type: integer
+          enum: [360, 480, 720, 1440]
+        price_change_threshold_pct:
+          type: number
+          format: float
+          minimum: 0.01
+          maximum: 100.0
+        retention_days:
+          type: integer
+          minimum: 30
+          maximum: 365
+        webhook_endpoint_url:
+          type: string
+          format: uri
+        webhook_enabled:
+          type: boolean
+        status:
+          $ref: '#/components/schemas/WebsiteStatus'
+
+    Website:
+      type: object
+      required: [id, client_id, base_url, status, created_at]
+      properties:
+        id:
+          type: string
+          format: uuid
+        client_id:
+          type: string
+          format: uuid
+        base_url:
+          type: string
+          format: uri
+        seed_urls:
+          type: array
+          items:
+            type: string
+            format: uri
+        status:
+          $ref: '#/components/schemas/WebsiteStatus'
+        crawl_frequency_minutes:
+          type: integer
+        price_change_threshold_pct:
+          type: number
+          format: float
+        retention_days:
+          type: integer
+        approved_product_count:
+          type: integer
+        last_successful_crawl_at:
+          type: string
+          format: date-time
+        last_crawl_status:
+          type: string
+        webhook_endpoint_url:
+          type: string
+          format: uri
+        webhook_enabled:
+          type: boolean
+        consecutive_failures:
+          type: integer
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    DiscoveredProduct:
+      type: object
+      required: [product_url, product_name]
+      properties:
+        product_url:
+          type: string
+          format: uri
+        normalized_url:
+          type: string
+          format: uri
+        product_name:
+          type: string
+        current_price:
+          type: number
+          format: float
+        current_stock_status:
+          $ref: '#/components/schemas/StockStatus'
+        extracted_product_id:
+          type: string
+        discovery_rank:
+          type: integer
+          description: Relevance ranking (lower = higher priority)
+
+    Product:
+      type: object
+      required: [id, website_id, product_name, normalized_url]
+      properties:
+        id:
+          type: string
+          format: uuid
+        website_id:
+          type: string
+          format: uuid
+        original_url:
+          type: string
+          format: uri
+        normalized_url:
+          type: string
+          format: uri
+        extracted_product_id:
+          type: string
+        extraction_method:
+          type: string
+        product_name:
+          type: string
+        current_price:
+          type: number
+          format: float
+        current_currency:
+          type: string
+          minLength: 3
+          maxLength: 3
+          example: "USD"
+        current_stock_status:
+          $ref: '#/components/schemas/StockStatus'
+        last_crawled_at:
+          type: string
+          format: date-time
+        created_at:
+          type: string
+          format: date-time
+        is_active:
+          type: boolean
+        delisted_at:
+          type: string
+          format: date-time
+
+    ProductHistoryRecord:
+      type: object
+      required: [id, product_id, crawl_timestamp, stock_status]
+      properties:
+        id:
+          type: string
+          format: uuid
+        product_id:
+          type: string
+          format: uuid
+        crawl_timestamp:
+          type: string
+          format: date-time
+        price:
+          type: number
+          format: float
+        currency:
+          type: string
+        stock_status:
+          $ref: '#/components/schemas/StockStatus'
+        price_changed:
+          type: boolean
+        stock_changed:
+          type: boolean
+        price_change_pct:
+          type: number
+          format: float
+        raw_crawl_data:
+          type: object
+          description: Full crawled product data in flexible JSON format
+
+    CrawlLog:
+      type: object
+      required: [id, website_id, started_at, status]
+      properties:
+        id:
+          type: string
+          format: uuid
+        website_id:
+          type: string
+          format: uuid
+        started_at:
+          type: string
+          format: date-time
+        completed_at:
+          type: string
+          format: date-time
+        status:
+          $ref: '#/components/schemas/CrawlStatus'
+        products_processed:
+          type: integer
+        changes_detected:
+          type: integer
+        errors_count:
+          type: integer
+        error_details:
+          type: object
+        retry_count:
+          type: integer
+        triggered_by:
+          type: string
+          enum: [scheduled, manual, discovery, retry]
+        duration_seconds:
+          type: integer
+
+    ApiKeyMetadata:
+      type: object
+      required: [id, key_prefix, created_at]
+      properties:
+        id:
+          type: string
+          format: uuid
+        key_prefix:
+          type: string
+          description: First 8 characters of API key for identification
+        description:
+          type: string
+        permissions_scope:
+          type: array
+          items:
+            type: string
+        created_at:
+          type: string
+          format: date-time
+        last_used_at:
+          type: string
+          format: date-time
+
+    ComponentHealth:
+      type: object
+      required: [status]
+      properties:
+        status:
+          type: string
+          enum: [healthy, unhealthy]
+        latency_ms:
+          type: number
+          format: float
+        message:
+          type: string
+
+    # Enum Schemas
+    WebsiteStatus:
+      type: string
+      enum:
+        - pending_approval
+        - active
+        - paused
+        - failed
+
+    StockStatus:
+      type: string
+      enum:
+        - in_stock
+        - out_of_stock
+        - limited_availability
+        - unknown
+
+    CrawlStatus:
+      type: string
+      enum:
+        - pending
+        - running
+        - success
+        - partial_success
+        - failed
+
+    # Common Schemas
+    Error:
+      type: object
+      required: [error, message, timestamp]
+      properties:
+        error:
+          type: string
+          description: Error type
+        message:
+          type: string
+          description: Human-readable error message
+        details:
+          type: object
+          description: Additional error context
+        timestamp:
+          type: string
+          format: date-time
+
+    Pagination:
+      type: object
+      required: [page, page_size, total_items, total_pages]
+      properties:
+        page:
+          type: integer
+          minimum: 1
+        page_size:
+          type: integer
+        total_items:
+          type: integer
+        total_pages:
+          type: integer
+        has_next:
+          type: boolean
+        has_previous:
+          type: boolean
