@@ -1,0 +1,13 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(git fetch:*)",
+      "Bash(powershell -Command \"if (Test-Path ''specs'') { Get-ChildItem -Path ''specs'' -Directory | Where-Object { $_.Name -match ''^[0-9]+-obsrv-api-mvp$'' } | ForEach-Object { $_.Name -replace ''-obsrv-api-mvp$'', '''' } | Sort-Object -Descending | Select-Object -First 1 } else { '''' }\")",
+      "Bash(powershell -File:*)",
+      "Bash(powershell:*)",
+      "WebSearch"
+    ],
+    "deny": [],
+    "ask": []
+  }
+}
