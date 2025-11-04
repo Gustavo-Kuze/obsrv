@@ -117,36 +117,65 @@ curl http://localhost:8000/health
 
 ### Create Your First API Key
 
-Since this is a fresh deployment, you'll need to manually create your first client and API key in the database:
+Since this is a fresh deployment, you'll need to manually create your first client and API key in the database, so run the following command in the Neon SQL Editor:
 
-```bash
-# Connect to your Neon database
-psql "your-neon-connection-string"
+```sql
+-- Enable pgcrypto extension (required for gen_random_bytes and crypt functions)
+CREATE EXTENSION IF NOT EXISTS pgcrypto;
 
-# Create a client
-INSERT INTO clients (id, name, email, webhook_secret_current)
-VALUES (
-    gen_random_uuid(),
-    'My Company',
-    'admin@mycompany.com',
-    encode(gen_random_bytes(48), 'base64')
-);
+-- Create or use existing client and create API key
+-- If client with email already exists, it will use that client
+WITH client_data AS (
+    -- Try to get existing client, or create new one if doesn't exist
+    SELECT id, name, email
+    FROM clients
+    WHERE email = 'admin@mycompany.com'
 
-# Get the client_id
-SELECT id, name FROM clients;
+    UNION ALL
 
-# Create an API key (replace <client-id> with actual UUID)
+    SELECT
+        gen_random_uuid() as id,
+        'My Company' as name,
+        'admin@mycompany.com' as email
+    WHERE NOT EXISTS (SELECT 1 FROM clients WHERE email = 'admin@mycompany.com')
+    LIMIT 1
+),
+ensure_client AS (
+    -- Insert only if client doesn't exist
+    INSERT INTO clients (id, name, email, webhook_secret_current)
+    SELECT
+        cd.id,
+        cd.name,
+        cd.email,
+        encode(gen_random_bytes(48), 'base64')
+    FROM client_data cd
+    WHERE NOT EXISTS (SELECT 1 FROM clients WHERE email = cd.email)
+    RETURNING id, name
+),
+final_client AS (
+    -- Get the client (either existing or newly created)
+    SELECT id, name FROM clients WHERE email = 'admin@mycompany.com'
+),
+key_generation AS (
+    SELECT
+        gen_random_uuid() as key_id,
+        'obsrv_live_' || encode(gen_random_bytes(32), 'base64') as plain_key,
+        fc.id as client_id,
+        fc.name as client_name
+    FROM final_client fc
+)
 INSERT INTO api_keys (id, client_id, key_hash, key_prefix, permissions_scope)
-VALUES (
-    gen_random_uuid(),
-    '<client-id>',
-    crypt('obsrv_live_' || encode(gen_random_bytes(32), 'base64'), gen_salt('bf', 12)),
+SELECT
+    key_id,
+    client_id,
+    crypt(plain_key, gen_salt('bf', 12)),
     'obsrv_li',
     '["read", "write", "admin"]'::jsonb
-);
-
-# Note: The actual key is: obsrv_live_<the-random-base64-string>
-# You'll need to save it for API calls
+FROM key_generation
+RETURNING
+    (SELECT plain_key FROM key_generation) as api_key,
+    (SELECT client_name FROM key_generation) as client_name,
+    (SELECT client_id FROM key_generation) as client_id;
 ```
 
 **Better approach**: Create a setup script after Phase 2 is complete that handles initial client/key creation via API.
