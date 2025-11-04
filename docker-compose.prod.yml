@@ -7,23 +7,25 @@ services:
       dockerfile: Dockerfile
       target: production
     container_name: obsrv-api-prod
-    ports:
-      - "8000:8000"
+     # Port not exposed publicly - Caddy handles external access
+     # ports:
+     #   - "8000:8000"
     environment:
-      - ENVIRONMENT=production
-      - DEBUG=false
-      - HOST=0.0.0.0
-      - PORT=8000
-      - DATABASE_URL=${DATABASE_URL}
-      - INNGEST_EVENT_KEY=${INNGEST_EVENT_KEY}
-      - INNGEST_SIGNING_KEY=${INNGEST_SIGNING_KEY}
-      - INNGEST_APP_ID=${INNGEST_APP_ID}
-      - SECRET_KEY=${SECRET_KEY}
-      - LOG_LEVEL=${LOG_LEVEL:-WARNING}
-      - CORS_ORIGINS=${CORS_ORIGINS}
-      - WEBHOOK_TIMEOUT=${WEBHOOK_TIMEOUT:-10}
-      - DEFAULT_CRAWL_TIMEOUT=${DEFAULT_CRAWL_TIMEOUT:-30}
-      - MAX_CONCURRENT_CRAWLS=${MAX_CONCURRENT_CRAWLS:-5}
+       - ENVIRONMENT=production
+       - DEBUG=false
+       - HOST=0.0.0.0
+       - PORT=8000
+       - PYTHONPATH=/app
+       - DATABASE_URL=${DATABASE_URL}
+       - INNGEST_EVENT_KEY=${INNGEST_EVENT_KEY}
+       - INNGEST_SIGNING_KEY=${INNGEST_SIGNING_KEY}
+       - INNGEST_APP_ID=${INNGEST_APP_ID}
+       - SECRET_KEY=${SECRET_KEY}
+       - LOG_LEVEL=${LOG_LEVEL:-WARNING}
+       - CORS_ORIGINS=${CORS_ORIGINS}
+       - WEBHOOK_TIMEOUT=${WEBHOOK_TIMEOUT:-10}
+       - DEFAULT_CRAWL_TIMEOUT=${DEFAULT_CRAWL_TIMEOUT:-30}
+       - MAX_CONCURRENT_CRAWLS=${MAX_CONCURRENT_CRAWLS:-5}
     restart: always
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
@@ -46,6 +48,7 @@ services:
       options:
         max-size: "10m"
         max-file: "3"
+    working_dir: /app
 
 networks:
   obsrv-network:

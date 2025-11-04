@@ -13,7 +13,6 @@ from uuid import UUID
 from sqlalchemy import (
     Boolean,
     DateTime,
-    Enum as SQLEnum,
     ForeignKey,
     Numeric,
     String,
@@ -22,7 +21,7 @@ from sqlalchemy import (
 from sqlalchemy.dialects.postgresql import JSONB, UUID as PG_UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
-from backend.src.models.base import Base
+from backend.src.core.database import Base
 
 if TYPE_CHECKING:
     from backend.src.models.crawl_log import CrawlExecutionLog
@@ -101,13 +100,7 @@ class ProductHistoryRecord(Base):
     )
 
     stock_status: Mapped[str] = mapped_column(
-        SQLEnum(
-            "in_stock",
-            "out_of_stock",
-            "limited_availability",
-            "unknown",
-            name="stock_status",
-        ),
+        String(25),
         nullable=False,
     )
 

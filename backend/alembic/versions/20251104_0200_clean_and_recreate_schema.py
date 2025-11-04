@@ -1,8 +1,8 @@
-"""Initial schema with all entities
+"""Clean and recreate schema
 
-Revision ID: 001
-Revises:
-Create Date: 2025-11-04 01:00:00
+Revision ID: 002
+Revises: None
+Create Date: 2025-11-04 02:00:00
 
 """
 from typing import Sequence, Union
@@ -19,14 +19,25 @@ depends_on: Union[str, Sequence[str], None] = None
 
 
 def upgrade() -> None:
-    # Create ENUM types
-    op.execute("CREATE TYPE subscription_tier AS ENUM ('basic', 'professional', 'enterprise')")
-    op.execute("CREATE TYPE website_status AS ENUM ('pending_approval', 'active', 'paused', 'failed')")
-    op.execute("CREATE TYPE stock_status AS ENUM ('in_stock', 'out_of_stock', 'limited_availability', 'unknown')")
-    op.execute("CREATE TYPE extraction_method AS ENUM ('url_pattern_amazon', 'url_pattern_shopify', 'url_pattern_generic', 'html_opengraph', 'html_schema', 'none')")
-    op.execute("CREATE TYPE crawl_status AS ENUM ('pending', 'running', 'success', 'partial_success', 'failed')")
-    op.execute("CREATE TYPE webhook_status AS ENUM ('pending', 'success', 'failed', 'retrying', 'exhausted')")
-    op.execute("CREATE TYPE crawl_trigger AS ENUM ('scheduled', 'manual', 'discovery', 'retry')")
+    # Drop all existing tables and types in reverse dependency order
+    op.execute("DROP TABLE IF EXISTS product_latest_state CASCADE")
+    op.execute("DROP TABLE IF EXISTS product_statistics CASCADE")
+    op.execute("DROP TABLE IF EXISTS webhook_delivery_logs CASCADE")
+    op.execute("DROP TABLE IF EXISTS crawl_execution_logs CASCADE")
+    op.execute("DROP TABLE IF EXISTS product_history CASCADE")
+    op.execute("DROP TABLE IF EXISTS products CASCADE")
+    op.execute("DROP TABLE IF EXISTS monitored_websites CASCADE")
+    op.execute("DROP TABLE IF EXISTS api_keys CASCADE")
+    op.execute("DROP TABLE IF EXISTS clients CASCADE")
+
+    # Drop all enum types
+    op.execute("DROP TYPE IF EXISTS subscription_tier CASCADE")
+    op.execute("DROP TYPE IF EXISTS website_status CASCADE")
+    op.execute("DROP TYPE IF EXISTS extraction_method CASCADE")
+    op.execute("DROP TYPE IF EXISTS stock_status CASCADE")
+    op.execute("DROP TYPE IF EXISTS crawl_status CASCADE")
+    op.execute("DROP TYPE IF EXISTS crawl_trigger CASCADE")
+    op.execute("DROP TYPE IF EXISTS webhook_status CASCADE")
 
     # Create clients table
     op.create_table(
@@ -36,7 +47,7 @@ def upgrade() -> None:
         sa.Column('email', sa.String(255), nullable=False, unique=True),
         sa.Column('created_at', sa.TIMESTAMP(timezone=True), nullable=False, server_default=sa.text('NOW()')),
         sa.Column('updated_at', sa.TIMESTAMP(timezone=True), nullable=False, server_default=sa.text('NOW()')),
-        sa.Column('subscription_tier', sa.Enum('basic', 'professional', 'enterprise', name='subscription_tier'), nullable=False, server_default='basic'),
+        sa.Column('subscription_tier', sa.String(20), nullable=False, server_default='basic'),
         sa.Column('is_active', sa.Boolean, nullable=False, server_default=sa.text('TRUE')),
         sa.Column('webhook_secret_current', sa.String(64), nullable=False),
         sa.Column('webhook_secret_previous', sa.String(64), nullable=True),
@@ -73,7 +84,7 @@ def upgrade() -> None:
         sa.Column('seed_urls', postgresql.JSONB, nullable=False),
         sa.Column('created_at', sa.TIMESTAMP(timezone=True), nullable=False, server_default=sa.text('NOW()')),
         sa.Column('updated_at', sa.TIMESTAMP(timezone=True), nullable=False, server_default=sa.text('NOW()')),
-        sa.Column('status', sa.Enum('pending_approval', 'active', 'paused', 'failed', name='website_status'), nullable=False, server_default='pending_approval'),
+        sa.Column('status', sa.String(20), nullable=False, server_default='pending_approval'),
         sa.Column('crawl_frequency_minutes', sa.Integer, nullable=False, server_default='1440'),
         sa.Column('price_change_threshold_pct', sa.Numeric(5, 2), nullable=False, server_default='1.00'),
         sa.Column('retention_days', sa.Integer, nullable=False, server_default='90'),
@@ -97,11 +108,11 @@ def upgrade() -> None:
         sa.Column('original_url', sa.String(2048), nullable=False),
         sa.Column('normalized_url', sa.String(2048), nullable=False),
         sa.Column('extracted_product_id', sa.String(255), nullable=True),
-        sa.Column('extraction_method', sa.Enum('url_pattern_amazon', 'url_pattern_shopify', 'url_pattern_generic', 'html_opengraph', 'html_schema', 'none', name='extraction_method'), nullable=False),
+        sa.Column('extraction_method', sa.String(30), nullable=False),
         sa.Column('product_name', sa.Text, nullable=False),
         sa.Column('current_price', sa.Numeric(12, 2), nullable=True),
         sa.Column('current_currency', sa.String(3), nullable=False, server_default='USD'),
-        sa.Column('current_stock_status', sa.Enum('in_stock', 'out_of_stock', 'limited_availability', 'unknown', name='stock_status'), nullable=False),
+        sa.Column('current_stock_status', sa.String(25), nullable=False),
         sa.Column('last_crawled_at', sa.TIMESTAMP(timezone=True), nullable=False),
         sa.Column('created_at', sa.TIMESTAMP(timezone=True), nullable=False, server_default=sa.text('NOW()')),
         sa.Column('updated_at', sa.TIMESTAMP(timezone=True), nullable=False, server_default=sa.text('NOW()')),
@@ -116,19 +127,26 @@ def upgrade() -> None:
     # Create product_history table (partitioned by month)
     op.execute("""
         CREATE TABLE product_history (
-            id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+            id UUID NOT NULL DEFAULT gen_random_uuid(),
             product_id UUID NOT NULL REFERENCES products(id) ON DELETE CASCADE,
             website_id UUID NOT NULL REFERENCES monitored_websites(id) ON DELETE CASCADE,
             crawl_timestamp TIMESTAMP WITH TIME ZONE NOT NULL,
             price NUMERIC(12, 2),
             currency VARCHAR(3) NOT NULL,
-            stock_status stock_status NOT NULL,
+            stock_status VARCHAR(25) NOT NULL,
             price_changed BOOLEAN NOT NULL DEFAULT FALSE,
             stock_changed BOOLEAN NOT NULL DEFAULT FALSE,
             price_change_pct NUMERIC(6, 2),
             raw_crawl_data JSONB NOT NULL,
             crawl_log_id UUID NOT NULL
         ) PARTITION BY RANGE (crawl_timestamp)
+    """)
+
+    # Add primary key constraint (must include partitioning column for partitioned tables)
+    op.execute("""
+        ALTER TABLE product_history
+        ADD CONSTRAINT pk_product_history
+        PRIMARY KEY (id, crawl_timestamp)
     """)
 
     # Create initial partitions for current month and next 3 months
@@ -162,13 +180,13 @@ def upgrade() -> None:
         sa.Column('website_id', postgresql.UUID(as_uuid=True), sa.ForeignKey('monitored_websites.id', ondelete='CASCADE'), nullable=False),
         sa.Column('started_at', sa.TIMESTAMP(timezone=True), nullable=False, server_default=sa.text('NOW()')),
         sa.Column('completed_at', sa.TIMESTAMP(timezone=True), nullable=True),
-        sa.Column('status', sa.Enum('pending', 'running', 'success', 'partial_success', 'failed', name='crawl_status'), nullable=False),
+        sa.Column('status', sa.String(15), nullable=False),
         sa.Column('products_processed', sa.Integer, nullable=False, server_default='0'),
         sa.Column('changes_detected', sa.Integer, nullable=False, server_default='0'),
         sa.Column('errors_count', sa.Integer, nullable=False, server_default='0'),
         sa.Column('error_details', postgresql.JSONB, nullable=True),
         sa.Column('retry_count', sa.Integer, nullable=False, server_default='0'),
-        sa.Column('triggered_by', sa.Enum('scheduled', 'manual', 'discovery', 'retry', name='crawl_trigger'), nullable=False),
+        sa.Column('triggered_by', sa.String(10), nullable=False),
         sa.Column('duration_seconds', sa.Integer, nullable=True),
     )
     op.create_index('idx_crawl_logs_website', 'crawl_execution_logs', ['website_id', 'started_at'], postgresql_ops={'started_at': 'DESC'})
@@ -195,7 +213,7 @@ def upgrade() -> None:
         sa.Column('attempt_number', sa.Integer, nullable=False, server_default='1'),
         sa.Column('delivery_timestamp', sa.TIMESTAMP(timezone=True), nullable=False, server_default=sa.text('NOW()')),
         sa.Column('http_status_code', sa.Integer, nullable=True),
-        sa.Column('status', sa.Enum('pending', 'success', 'failed', 'retrying', 'exhausted', name='webhook_status'), nullable=False),
+        sa.Column('status', sa.String(10), nullable=False),
         sa.Column('response_body', sa.Text, nullable=True),
         sa.Column('error_message', sa.Text, nullable=True),
         sa.Column('next_retry_at', sa.TIMESTAMP(timezone=True), nullable=True),
@@ -249,12 +267,3 @@ def downgrade() -> None:
     op.drop_table('monitored_websites')
     op.drop_table('api_keys')
     op.drop_table('clients')
-
-    # Drop ENUM types
-    op.execute("DROP TYPE IF EXISTS crawl_trigger")
-    op.execute("DROP TYPE IF EXISTS webhook_status")
-    op.execute("DROP TYPE IF EXISTS crawl_status")
-    op.execute("DROP TYPE IF EXISTS extraction_method")
-    op.execute("DROP TYPE IF EXISTS stock_status")
-    op.execute("DROP TYPE IF EXISTS website_status")
-    op.execute("DROP TYPE IF EXISTS subscription_tier")

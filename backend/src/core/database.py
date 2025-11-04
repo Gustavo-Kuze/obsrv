@@ -3,6 +3,7 @@ Database configuration and session management for Neon PostgreSQL.
 """
 
 from typing import AsyncGenerator
+from urllib.parse import parse_qs, urlencode, urlparse, urlunparse
 
 from sqlalchemy import create_engine, event, pool
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
@@ -25,15 +26,32 @@ sync_engine = create_engine(
     echo=settings.DEBUG,
 )
 
+# Parse the URL to extract SSL parameters for async engine
+parsed = urlparse(settings.DATABASE_URL)
+query_params = parse_qs(parsed.query)
+
+# Set up connect_args for SSL
+connect_args = {}
+if "sslmode" in query_params:
+    sslmode = query_params["sslmode"][0]
+    if sslmode in ("require", "prefer", "allow"):
+        connect_args["ssl"] = True
+    elif sslmode == "disable":
+        connect_args["ssl"] = False
+
+# Remove all query parameters from URL and convert to asyncpg
+clean_url = urlunparse(parsed._replace(query="")).replace("postgresql://", "postgresql+asyncpg://")
+
 # Asynchronous engine for API operations
 async_engine = create_async_engine(
-    settings.DATABASE_URL.replace("postgresql://", "postgresql+asyncpg://"),
+    clean_url,
     poolclass=pool.AsyncAdaptedQueuePool,
     pool_size=10,
     max_overflow=20,
     pool_pre_ping=True,
     pool_recycle=3600,
     echo=settings.DEBUG,
+    connect_args=connect_args,
 )
 
 # Session makers

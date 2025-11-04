@@ -22,15 +22,15 @@ COPY --chown=obsrv:obsrv pyproject.toml ./
 # Development stage
 FROM base as development
 
+# Copy application code
+COPY --chown=obsrv:obsrv backend/ ./backend/
+COPY --chown=obsrv:obsrv tests/ ./tests/
+
 # Install development dependencies
 RUN pip install --no-cache-dir -e ".[dev]"
 
 # Switch to non-root user
 USER obsrv
-
-# Copy application code
-COPY --chown=obsrv:obsrv backend/ ./backend/
-COPY --chown=obsrv:obsrv tests/ ./tests/
 
 # Expose API port
 EXPOSE 8000
@@ -45,14 +45,20 @@ CMD ["uvicorn", "backend.src.api.main:app", "--host", "0.0.0.0", "--port", "8000
 # Production stage
 FROM base as production
 
+# Set working directory to /app
+WORKDIR /app
+
+# Set PYTHONPATH
+ENV PYTHONPATH=/app
+
+# Copy application code
+COPY --chown=obsrv:obsrv backend/ ./backend/
+
 # Install production dependencies only
 RUN pip install --no-cache-dir .
 
 # Switch to non-root user
 USER obsrv
-
-# Copy application code
-COPY --chown=obsrv:obsrv backend/ ./backend/
 
 # Expose API port
 EXPOSE 8000
@@ -62,4 +68,4 @@ HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \
     CMD curl -f http://localhost:8000/health || exit 1
 
 # Run production server with multiple workers
-CMD ["uvicorn", "backend.src.api.main:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "4"]
+CMD ["sh", "-c", "PYTHONPATH=/app uvicorn backend.src.api.main:app --host 0.0.0.0 --port 8000 --workers 4"]

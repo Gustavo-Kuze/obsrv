@@ -5,7 +5,6 @@ Inngest client configuration for background task processing.
 from typing import Any, Dict, Optional
 
 from inngest import Inngest
-from inngest.experimental import get_client
 
 from backend.src.core.config import settings
 from backend.src.core.logging import get_logger
@@ -193,9 +192,8 @@ async def check_inngest_health() -> Dict[str, Any]:
         >>> print(status["status"])  # "healthy" or "unhealthy"
     """
     try:
-        # Try to get client info to verify connectivity
-        client = get_client()
-        if client:
+        # Check if client is properly initialized
+        if inngest_client:
             return {
                 "status": "healthy",
                 "service": "inngest",

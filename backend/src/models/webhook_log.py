@@ -10,7 +10,6 @@ from uuid import UUID
 
 from sqlalchemy import (
     DateTime,
-    Enum as SQLEnum,
     ForeignKey,
     Integer,
     String,
@@ -20,7 +19,7 @@ from sqlalchemy import (
 from sqlalchemy.dialects.postgresql import JSONB, UUID as PG_UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
-from backend.src.models.base import Base
+from backend.src.core.database import Base
 
 if TYPE_CHECKING:
     from backend.src.models.website import MonitoredWebsite
@@ -114,14 +113,7 @@ class WebhookDeliveryLog(Base):
     )
 
     status: Mapped[str] = mapped_column(
-        SQLEnum(
-            "pending",
-            "success",
-            "failed",
-            "retrying",
-            "exhausted",
-            name="webhook_status",
-        ),
+        String(10),
         nullable=False,
     )
 

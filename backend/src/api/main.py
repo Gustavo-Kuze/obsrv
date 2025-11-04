@@ -203,7 +203,7 @@ def register_exception_handlers(app: FastAPI) -> None:
             extra={
                 "error_code": exc.error_code,
                 "status_code": exc.status_code,
-                "message": exc.message,
+                "error_message": exc.message,
                 "path": request.url.path,
             },
         )

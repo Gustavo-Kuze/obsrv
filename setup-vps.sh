@@ -79,7 +79,7 @@ echo ""
 
 # Run database migrations
 echo "Running database migrations..."
-docker compose -f docker-compose.prod.yml run --rm api alembic upgrade head
+docker compose -f docker-compose.prod.yml run --rm api alembic -c /app/backend/alembic.ini upgrade head
 echo "✓ Database migrations complete"
 echo ""
 

@@ -51,7 +51,7 @@ dev = [
 ]
 
 [tool.setuptools]
-packages = ["backend.src"]
+packages = ["backend"]
 
 [tool.ruff]
 line-length = 100
