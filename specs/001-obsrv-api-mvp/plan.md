@@ -12,13 +12,13 @@ The Obsrv API is a low-cost e-commerce monitoring system that tracks competitor 
 ## Technical Context
 
 **Language/Version**: Python 3.11+
-**Primary Dependencies**: FastAPI (REST API), Celery (task queue), crawl4ai (web crawling), Redis (task broker/cache), PostgreSQL (primary storage), Docker Compose (orchestration)
-**Storage**: PostgreSQL with JSONB for flexible crawl data, Redis for task queue and caching
-**Testing**: pytest with pytest-asyncio, httpx for API testing, pytest-celery for task testing
-**Target Platform**: Linux VPS (single server, Docker Compose deployment)
-**Project Type**: Web/API backend (monolithic architecture)
+**Primary Dependencies**: FastAPI (REST API), Inngest (background tasks), crawl4ai (web crawling), Neon PostgreSQL (primary storage), Docker Compose (orchestration)
+**Storage**: Neon PostgreSQL with JSONB for flexible crawl data
+**Testing**: pytest with pytest-asyncio, httpx for API testing
+**Target Platform**: Linux VPS (single server, Docker Compose deployment) + managed services
+**Project Type**: Web/API backend (monolithic architecture) with serverless background processing
 **Performance Goals**: 95% crawl success rate, <2s API response for 90-day historical queries, process 100 products across 20 websites within 30 minutes
-**Constraints**: Single VPS (4 CPU, 8GB RAM, 100GB storage), <10 minute webhook delivery latency, 99% API uptime, daily crawl frequency baseline (2-4x per day configurable)
+**Constraints**: Single VPS (1 CPU, 4GB RAM, 50GB storage) + Neon + Inngest, <10 minute webhook delivery latency, 99% API uptime, daily crawl frequency baseline (2-4x per day configurable)
 **Scale/Scope**: MVP supporting 10-20 monitored websites, 100 products per website, 90-day retention (360MB estimated storage), 35 functional requirements, 5 prioritized user stories
 
 ## Constitution Check
@@ -27,7 +27,7 @@ The Obsrv API is a low-cost e-commerce monitoring system that tracks competitor 
 
 **Status**: Constitution file contains template placeholders only. No project-specific principles defined yet. Proceeding with best practices for Python API development:
 
-- ✅ **Clear separation of concerns**: API layer (FastAPI), business logic (services), data access (repositories), background tasks (Celery)
+- ✅ **Clear separation of concerns**: API layer (FastAPI), business logic (services), data access (repositories), background tasks (Inngest)
 - ✅ **Testability**: pytest with clear unit/integration/contract test boundaries
 - ✅ **Observability**: Structured logging with correlation IDs, health check endpoints
 - ✅ **Security**: API key authentication, HMAC webhook signatures, hashed credentials
@@ -80,11 +80,11 @@ src/
 │   ├── auth_service.py         # API key generation, validation
 │   └── history_service.py      # Historical data queries, retention
 │
-├── tasks/                 # Celery background tasks
-│   ├── crawl_tasks.py    # Scheduled/on-demand crawls
-│   ├── discovery_tasks.py # Product discovery from seed URLs
-│   ├── notification_tasks.py # Webhook delivery with retries
-│   └── maintenance_tasks.py  # Data retention, cleanup
+├── functions/             # Inngest background functions
+│   ├── crawl_functions.py    # Scheduled/on-demand crawls
+│   ├── discovery_functions.py # Product discovery from seed URLs
+│   ├── notification_functions.py # Webhook delivery with retries
+│   └── maintenance_functions.py  # Data retention, cleanup
 │
 ├── crawlers/              # Web crawling logic
 │   ├── base_crawler.py   # Abstract crawler with crawl4ai
@@ -112,7 +112,7 @@ src/
 │   └── config.py         # Environment configuration
 │
 └── db/                    # Database setup
-    ├── session.py        # SQLAlchemy session management
+    ├── session.py        # SQLAlchemy session management for Neon
     ├── migrations/       # Alembic migrations
     └── seed.py           # Development seed data
 
@@ -129,7 +129,7 @@ tests/
     ├── repositories/
     └── utils/
 
-docker-compose.yml        # Orchestration: API, Celery, PostgreSQL, Redis
+docker-compose.yml        # Orchestration: API only
 Dockerfile               # Application container image
 alembic.ini              # Database migration config
 pyproject.toml           # Python dependencies (Poetry)
@@ -137,10 +137,10 @@ pytest.ini               # Test configuration
 .env.example             # Environment variables template
 ```
 
-**Structure Decision**: Monolithic web API backend using layered architecture. Clear separation between API layer (FastAPI routes), business logic (services), data access (repositories), and background processing (Celery tasks). Crawling logic isolated in dedicated module with platform adapters for extensibility. This structure supports the MVP scope while enabling future modularization if needed.
+**Structure Decision**: Monolithic web API backend using layered architecture. Clear separation between API layer (FastAPI routes), business logic (services), data access (repositories), and background processing (Inngest functions). Crawling logic isolated in dedicated module with platform adapters for extensibility. This structure supports the MVP scope while enabling future modularization if needed.
 
 ## Complexity Tracking
 
 > **Fill ONLY if Constitution Check has violations that must be justified**
 
-No violations identified. Architecture follows established FastAPI/Celery patterns appropriate for the problem domain.
+No violations identified. Architecture follows established FastAPI/Inngest patterns appropriate for the problem domain.

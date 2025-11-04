@@ -255,205 +255,203 @@ result = await crawl_product_page(product_url)
 
 ---
 
-## 3. Celery Task Patterns
+## 3. Inngest Function Patterns
 
 ### Decision
 
-**Celery Beat Setup**: Use database-backed scheduler with `django-celery-beat` (or standalone equivalent) for dynamic schedule management.
+**Inngest Functions**: Use step-based durable functions for complex workflows with automatic retries and event-driven execution.
 
 **Configuration**:
 ```python
-# celeryconfig.py
-from celery.schedules import crontab
-from kombu import Queue
+# inngest_config.py
+import inngest
+from inngest.fast_api import serve
 
-# Broker and backend
-broker_url = 'redis://redis:6379/0'
-result_backend = 'redis://redis:6379/0'
+# Create Inngest client
+inngest_client = inngest.Inngest(
+    app_id="obsrv-api-mvp",
+    event_key=os.getenv("INNGEST_EVENT_KEY"),
+    env=os.getenv("INNGEST_ENV", "dev")
+)
 
-# Task routing
-task_routes = {
-    'tasks.crawl_tasks.*': {'queue': 'crawl_queue'},
-    'tasks.discovery_tasks.*': {'queue': 'discovery_queue'},
-    'tasks.notification_tasks.*': {'queue': 'notification_queue'},
-    'tasks.maintenance_tasks.*': {'queue': 'maintenance_queue'},
-}
+# Function concurrency and performance
+@inngest_client.create_function(
+    fn_id="crawl_website",
+    concurrency=5,  # Limit concurrent crawls
+    retries=3,
+    timeout="2h"  # Up to 2 hours for large crawls
+)
+async def crawl_website(ctx: inngest.Context, website_id: int):
+    """Crawl all products for a website with step-based workflow"""
+    pass
 
-# Concurrency and performance
-worker_prefetch_multiplier = 1  # One task at a time for resource control
-worker_max_tasks_per_child = 50  # Prevent memory leaks
-task_acks_late = True  # Acknowledge after completion
-task_reject_on_worker_lost = True  # Requeue if worker dies
+# Scheduled functions (replaces Celery Beat)
+@inngest_client.create_function(
+    fn_id="scheduled_daily_crawls",
+    trigger=inngest.TriggerCron("0 2 * * *"),  # 2 AM UTC daily
+)
+async def scheduled_daily_crawls(ctx: inngest.Context):
+    """Execute daily crawl schedule"""
+    pass
 
-# Task time limits
-task_soft_time_limit = 300  # 5 minutes soft limit
-task_time_limit = 600  # 10 minutes hard limit
-
-# Result expiration
-result_expires = 3600  # 1 hour
-
-# Beat schedule (default schedules, can be overridden in DB)
-beat_schedule = {
-    'daily-crawls-2am': {
-        'task': 'tasks.crawl_tasks.execute_scheduled_crawls',
-        'schedule': crontab(hour=2, minute=0),  # 2 AM UTC daily
-        'options': {'queue': 'crawl_queue'}
-    },
-    'cleanup-old-data-weekly': {
-        'task': 'tasks.maintenance_tasks.purge_old_history',
-        'schedule': crontab(hour=3, minute=0, day_of_week=0),  # Sunday 3 AM UTC
-        'options': {'queue': 'maintenance_queue'}
-    },
-    'health-check-hourly': {
-        'task': 'tasks.maintenance_tasks.check_crawl_health',
-        'schedule': crontab(minute=0),  # Every hour
-        'options': {'queue': 'maintenance_queue'}
-    }
-}
+@inngest_client.create_function(
+    fn_id="weekly_data_cleanup",
+    trigger=inngest.TriggerCron("0 3 * * 0"),  # Sunday 3 AM UTC
+)
+async def weekly_data_cleanup(ctx: inngest.Context):
+    """Clean up old historical data"""
+    pass
 ```
 
-**Task Retry Strategy**:
+**Function Retry Strategy**:
 ```python
-# tasks/crawl_tasks.py
-from celery import Task
-from celery.exceptions import MaxRetriesExceededError
+# functions/crawl_functions.py
+import inngest
 
-class CrawlTask(Task):
-    """Base task with retry configuration"""
-    autoretry_for = (
-        ConnectionError,  # Network issues
-        TimeoutError,     # Page load timeout
-        Exception,        # Catch-all for transient errors
-    )
-    retry_kwargs = {
-        'max_retries': 3,
-        'countdown': 60,  # Initial delay: 60 seconds
-    }
-    retry_backoff = True  # Exponential: 60s, 120s, 240s
-    retry_backoff_max = 600  # Cap at 10 minutes
-    retry_jitter = True  # Add randomness to prevent thundering herd
-
-@celery_app.task(base=CrawlTask, bind=True)
-def crawl_single_product(self, product_id: int):
+@inngest_client.create_function(
+    fn_id="crawl_single_product",
+    retries=3,  # Automatic retries with exponential backoff
+    retry_on=(Exception,),  # Retry on any exception
+)
+async def crawl_single_product(ctx: inngest.Context, product_id: int):
     """Crawl single product with automatic retries"""
     try:
-        product = get_product(product_id)
-        result = crawl_product_page(product.url)
+        # Step 1: Get product data
+        product = await ctx.run("get_product", get_product, product_id)
+
+        # Step 2: Crawl the product page
+        result = await ctx.run("crawl_page", crawl_product_page, product.url)
 
         if not result['success']:
             # Raise to trigger retry
             raise Exception(f"Crawl failed: {result['error']}")
 
-        save_product_snapshot(product_id, result)
-        detect_and_notify_changes(product_id)
+        # Step 3: Save snapshot and detect changes
+        await ctx.run("save_snapshot", save_product_snapshot, product_id, result)
+        await ctx.run("detect_changes", detect_and_notify_changes, product_id)
 
-    except MaxRetriesExceededError:
-        # All retries exhausted - log failure
-        log_crawl_failure(product_id, "Max retries exceeded")
+    except Exception as e:
+        # Log failure after all retries exhausted
+        await ctx.run("log_failure", log_crawl_failure, product_id, str(e))
         raise
 ```
 
-**Workflow Patterns (Discovery → Approval → Baseline → Monitoring)**:
+**Step-Based Workflow Patterns (Discovery → Approval → Baseline → Monitoring)**:
 ```python
-# tasks/workflow_patterns.py
-from celery import chain, group, chord
+# functions/workflow_functions.py
 
 # Pattern 1: Website Registration Workflow
-def register_website_workflow(website_id: int, seed_urls: list[str]):
-    """Chain: Discovery → Wait for Approval → Baseline Crawl"""
-    workflow = chain(
-        # Step 1: Discover products from seed URLs
-        discover_products_from_seeds.s(website_id, seed_urls),
+@inngest_client.create_function(
+    fn_id="register_website_workflow",
+    trigger=inngest.TriggerEvent(event="website.register")
+)
+async def register_website_workflow(ctx: inngest.Context, website_id: int, seed_urls: list[str]):
+    """Step-based: Discovery → Wait for Approval → Baseline Crawl"""
+    # Step 1: Discover products from seed URLs
+    discovered_products = await ctx.run("discover_products", discover_products_from_seeds, website_id, seed_urls)
 
-        # Step 2: Manual approval gate (not automated)
-        # Client approves via API, triggering next step
-    )
-    return workflow.apply_async()
+    # Step 2: Manual approval gate (not automated)
+    # Client approves via API, which triggers "website.approved" event
 
 # Pattern 2: Baseline Crawl After Approval
-def baseline_crawl_workflow(website_id: int, approved_product_ids: list[int]):
-    """Group: Parallel crawl of all approved products"""
-    crawl_tasks = group(
-        crawl_single_product.s(product_id)
-        for product_id in approved_product_ids
-    )
-    return crawl_tasks.apply_async()
+@inngest_client.create_function(
+    fn_id="baseline_crawl_workflow",
+    trigger=inngest.TriggerEvent(event="website.approved")
+)
+async def baseline_crawl_workflow(ctx: inngest.Context, website_id: int, approved_product_ids: list[int]):
+    """Parallel crawl of all approved products"""
+    # Fan out: Crawl all products in parallel
+    crawl_results = []
+    for product_id in approved_product_ids:
+        result = await ctx.run(f"crawl_{product_id}", crawl_single_product, product_id)
+        crawl_results.append(result)
+
+    return crawl_results
 
 # Pattern 3: Scheduled Daily Monitoring
-@celery_app.task
-def execute_scheduled_crawls():
-    """Chord: Crawl all active websites → Send summary notification"""
-    active_websites = get_active_websites()
+@inngest_client.create_function(
+    fn_id="scheduled_daily_crawls",
+    trigger=inngest.TriggerCron("0 2 * * *")  # 2 AM UTC daily
+)
+async def scheduled_daily_crawls(ctx: inngest.Context):
+    """Crawl all active websites with summary notification"""
+    active_websites = await ctx.run("get_active_websites", get_active_websites)
 
-    # Create parallel crawl tasks for each website
-    crawl_groups = group(
-        crawl_website_products.s(website.id)
-        for website in active_websites
-    )
+    # Parallel processing of websites
+    crawl_results = []
+    for website in active_websites:
+        result = await ctx.run(f"crawl_website_{website.id}", crawl_website_products, website.id)
+        crawl_results.append(result)
 
-    # After all crawls complete, send summary
-    workflow = chord(crawl_groups)(
-        send_daily_summary.s()
-    )
-    return workflow
+    # Send summary notification
+    await ctx.run("send_summary", send_daily_summary, crawl_results)
 
-@celery_app.task
-def crawl_website_products(website_id: int):
-    """Crawl all products for a single website"""
-    products = get_website_products(website_id)
+@inngest_client.create_function(
+    fn_id="crawl_website_products",
+    retries=2
+)
+async def crawl_website_products(ctx: inngest.Context, website_id: int):
+    """Crawl all products for a single website with rate limiting"""
+    products = await ctx.run("get_products", get_website_products, website_id)
 
     # Sequential crawl with rate limiting
     results = []
     for product in products:
-        result = crawl_single_product.delay(product.id)
+        result = await ctx.run(f"crawl_product_{product.id}", crawl_single_product, product.id)
         results.append(result)
         # Rate limiting handled within crawl_single_product
 
     return results
 
 # Pattern 4: Change Detection → Webhook Notification
-@celery_app.task
-def detect_and_notify_changes(product_id: int):
-    """Chain: Detect changes → Send webhooks"""
-    changes = detect_product_changes(product_id)
+@inngest_client.create_function(
+    fn_id="detect_and_notify_changes",
+    retries=3
+)
+async def detect_and_notify_changes(ctx: inngest.Context, product_id: int):
+    """Step-based: Detect changes → Send webhooks"""
+    changes = await ctx.run("detect_changes", detect_product_changes, product_id)
 
     if changes:
-        # Fire and forget webhook notifications
+        # Send webhook notifications (fire and forget)
         for change in changes:
-            send_webhook_notification.delay(change)
+            await ctx.run(f"notify_{change.id}", send_webhook_notification, change)
 
-@celery_app.task(base=CrawlTask, bind=True)
-def send_webhook_notification(self, change_data: dict):
+@inngest_client.create_function(
+    fn_id="send_webhook_notification",
+    retries=3
+)
+async def send_webhook_notification(ctx: inngest.Context, change_data: dict):
     """Send webhook with retries"""
     try:
-        response = send_webhook(change_data)
-        log_webhook_delivery(change_data, response)
+        response = await ctx.run("send_webhook", send_webhook, change_data)
+        await ctx.run("log_delivery", log_webhook_delivery, change_data, response)
     except Exception as exc:
-        # Retry up to 3 times with exponential backoff
-        raise self.retry(exc=exc)
+        # Automatic retry with exponential backoff
+        raise exc
 ```
 
 ### Rationale
 
-- **Database-backed Beat**: Allows runtime schedule updates without restarting workers (clients can adjust crawl times via API)
-- **Crontab for daily crawls**: More intuitive than interval schedules for time-based operations (2 AM UTC daily)
-- **Exponential backoff**: Handles transient failures gracefully, prevents overwhelming failed endpoints
-- **Task routing to separate queues**: Isolates crawl tasks (resource-intensive) from notifications (latency-sensitive)
-- **Chord pattern for daily crawls**: Ensures all websites crawled before sending summary, handles partial failures gracefully
-- **Chain for workflows**: Clear sequential dependencies (discovery must complete before approval can happen)
+- **Step-based functions**: Durable execution ensures workflows complete even with failures, better than Celery's fire-and-forget approach
+- **Event-driven architecture**: More flexible than cron schedules - can trigger crawls via API events or schedules
+- **Automatic retries**: Built-in exponential backoff handles transient failures without custom code
+- **Serverless scaling**: No need to manage worker pools or resource limits on VPS
+- **Fan-out pattern**: Parallel processing of products/websites with built-in coordination
+- **Step isolation**: Each step can fail independently without affecting the entire workflow
 
 ### Alternatives Considered
 
-- **Hardcoded beat_schedule**: Simpler but requires code changes and restarts to adjust crawl times
-- **Interval schedules instead of crontab**: Less intuitive for calendar-based scheduling ("daily at 2 AM")
-- **Synchronous crawl workflows**: Would block workers, poor resource utilization, no parallel processing
-- **No retry logic**: Higher failure rates, more manual intervention required
+- **Celery + Redis**: Traditional but requires managing worker infrastructure and resource limits
+- **AWS Lambda + SQS**: More complex infrastructure setup, higher cold start latency
+- **GitHub Actions**: Limited to scheduled workflows, no dynamic triggering, resource constraints
+- **No step isolation**: Monolithic functions harder to debug and retry partial failures
 
 ### References
 
-- Celery Beat documentation: https://docs.celeryq.dev/en/stable/userguide/periodic-tasks.html
-- Celery Canvas patterns: https://docs.celeryq.dev/en/stable/userguide/canvas.html
-- Retry strategies: https://testdriven.io/blog/retrying-failed-celery-tasks/
+- Inngest Functions documentation: https://www.inngest.com/docs/features/inngest-functions
+- Inngest Step Functions: https://www.inngest.com/docs/features/inngest-functions/steps-workflows
+- Inngest Event Triggers: https://www.inngest.com/docs/features/events
 
 ---
 
@@ -646,11 +644,11 @@ def cleanup_expired_webhook_secrets():
 
 ---
 
-## 5. PostgreSQL Schema Design
+## 5. Neon PostgreSQL Schema Design
 
 ### Decision
 
-**JSONB Strategy**: Use `jsonb_path_ops` GIN indexes for containment queries, hybrid approach combining relational columns for queryable fields + JSONB for flexible crawl data.
+**JSONB Strategy**: Use `jsonb_path_ops` GIN indexes for containment queries, hybrid approach combining relational columns for queryable fields + JSONB for flexible crawl data. Leverage Neon's managed partitioning for time-series data.
 
 **Schema Design**:
 ```sql
@@ -873,16 +871,19 @@ WHERE config @> '{"crawl_frequency": "hourly"}'::jsonb;
 
 ### Decision
 
-**Strategy**: DROP PARTITION for bulk historical data removal + DELETE for fine-grained cleanup + aggregated statistics preservation.
+**Strategy**: Leverage Neon's managed partitioning for automatic data lifecycle management + aggregated statistics preservation.
 
 **Implementation**:
 ```python
-# tasks/maintenance_tasks.py
+# functions/maintenance_functions.py
 from datetime import datetime, timedelta
 from sqlalchemy import text
 
-@celery_app.task
-def purge_old_history():
+@inngest_client.create_function(
+    fn_id="purge_old_history",
+    trigger=inngest.TriggerCron("0 3 * * 0")  # Sunday 3 AM UTC
+)
+async def purge_old_history(ctx: inngest.Context):
     """Drop old partitions and create future partitions"""
     # Get all websites with their retention settings
     websites = get_websites_with_retention_config()
@@ -891,20 +892,19 @@ def purge_old_history():
         retention_days = website.config.get('retention_days', 90)
         cutoff_date = datetime.utcnow() - timedelta(days=retention_days)
 
-        # Find partitions older than retention period
-        old_partitions = find_partitions_before(cutoff_date)
+    # Use Neon's automated partitioning - just trigger cleanup
+    # Neon handles partition management automatically
+    websites = await ctx.run("get_websites", get_websites_with_retention_config)
 
-        for partition_name in old_partitions:
-            # Archive aggregated stats BEFORE dropping partition
-            archive_partition_statistics(partition_name, website.id)
+    for website in websites:
+        retention_days = website.config.get('retention_days', 90)
+        cutoff_date = datetime.utcnow() - timedelta(days=retention_days)
 
-            # Drop partition (instant, releases disk space immediately)
-            drop_partition(partition_name)
+        # Archive aggregated stats before cleanup
+        await ctx.run(f"archive_stats_{website.id}", archive_partition_statistics, website.id, cutoff_date)
 
-            logger.info(f"Dropped partition {partition_name} for website {website.id}")
-
-    # Create future partitions (3 months ahead)
-    create_future_partitions(months_ahead=3)
+        # Trigger Neon's automated cleanup (via SQL or API)
+        await ctx.run(f"cleanup_data_{website.id}", cleanup_old_data, website.id, cutoff_date)
 
 def drop_partition(partition_name: str):
     """Drop partition table - instant operation"""
@@ -966,8 +966,11 @@ def create_future_partitions(months_ahead: int = 3):
         logger.info(f"Created partition {partition_name}")
 
 # Fine-grained cleanup for non-partitioned tables
-@celery_app.task
-def cleanup_old_logs():
+@inngest_client.create_function(
+    fn_id="cleanup_old_logs",
+    trigger=inngest.TriggerCron("0 4 * * *")  # Daily 4 AM UTC
+)
+async def cleanup_old_logs(ctx: inngest.Context):
     """Delete old crawl/webhook logs (not worth partitioning)"""
     retention_days = 30
     cutoff_date = datetime.utcnow() - timedelta(days=retention_days)
@@ -1017,40 +1020,39 @@ CREATE TABLE product_statistics_monthly (
 CREATE INDEX idx_stats_product_month ON product_statistics_monthly(product_id, month DESC);
 ```
 
-**Celery Beat Schedule**:
+**Inngest Cron Triggers**:
 ```python
-beat_schedule = {
-    'purge-old-history-weekly': {
-        'task': 'tasks.maintenance_tasks.purge_old_history',
-        'schedule': crontab(hour=3, minute=0, day_of_week=0),  # Sunday 3 AM UTC
-        'options': {'queue': 'maintenance_queue'}
-    },
-    'cleanup-logs-daily': {
-        'task': 'tasks.maintenance_tasks.cleanup_old_logs',
-        'schedule': crontab(hour=4, minute=0),  # Daily 4 AM UTC
-        'options': {'queue': 'maintenance_queue'}
-    },
-    'create-future-partitions-monthly': {
-        'task': 'tasks.maintenance_tasks.create_future_partitions',
-        'schedule': crontab(hour=2, minute=0, day_of_month=1),  # 1st of month, 2 AM UTC
-        'options': {'queue': 'maintenance_queue'}
-    }
-}
+# Cron triggers are defined in function decorators
+@inngest_client.create_function(
+    fn_id="purge_old_history",
+    trigger=inngest.TriggerCron("0 3 * * 0")  # Sunday 3 AM UTC
+)
+async def purge_old_history(ctx: inngest.Context):
+    pass
+
+@inngest_client.create_function(
+    fn_id="cleanup_old_logs",
+    trigger=inngest.TriggerCron("0 4 * * *")  # Daily 4 AM UTC
+)
+async def cleanup_old_logs(ctx: inngest.Context):
+    pass
+
+# Note: Partition creation not needed with Neon's managed partitioning
 ```
 
 ### Rationale
 
-- **PARTITION DROP over DELETE**: 1000x faster (metadata operation vs row-by-row deletion), instantly releases disk space, no VACUUM overhead
-- **Monthly partitions**: Balance between partition count (12/year) and partition size (~10K rows/month for 100 products)
+- **Neon managed partitioning**: Automatic partition lifecycle management without manual intervention
+- **Serverless scaling**: No need to manage partition creation or maintenance tasks
 - **Aggregated statistics**: Preserves long-term trends without storing individual snapshots, enables multi-year analysis
-- **Batched DELETE for logs**: Prevents table bloat for non-critical data, avoids long exclusive locks
-- **Automated partition creation**: Ensures new partitions exist before data arrives, prevents INSERT failures
+- **Event-driven cleanup**: Cron-triggered functions ensure regular maintenance without manual scheduling
+- **Reduced operational complexity**: Neon handles partitioning, indexing, and performance optimization
 
 ### Alternatives Considered
 
-- **DELETE with VACUUM**: 1000x slower, causes table bloat, requires aggressive VACUUM schedules
-- **TRUNCATE**: Faster than DELETE but removes ALL data from table (not selective)
-- **Archive to cold storage**: Adds complexity, not needed for MVP scale (90 days × 2000 products = ~180K rows)
+- **Manual partition management**: Complex to implement and maintain, error-prone
+- **DELETE with VACUUM**: Slower performance, requires ongoing maintenance
+- **Archive to external storage**: Adds complexity and cost for MVP scale
 
 ### References
 
@@ -1068,7 +1070,7 @@ beat_schedule = {
 
 **Key Generation**: 32-byte (256-bit) URL-safe tokens using Python's `secrets` module.
 
-**Caching Strategy**: Redis cache with 5-minute TTL for validated API keys.
+**Connection Strategy**: Direct Neon PostgreSQL connections with connection pooling.
 
 **Implementation**:
 ```python
@@ -1127,36 +1129,21 @@ class APIKeyManager:
             return False
 
 # services/auth_service.py
-import redis
-import json
 from datetime import timedelta
 
 class AuthService:
-    """API key authentication with Redis caching"""
+    """API key authentication with Neon PostgreSQL"""
 
-    CACHE_TTL_SECONDS = 300  # 5 minutes
-    CACHE_KEY_PREFIX = "api_key:"
-
-    def __init__(self, db_session, redis_client: redis.Redis):
+    def __init__(self, db_session):
         self.db = db_session
-        self.redis = redis_client
 
     def authenticate(self, api_key: str) -> Optional[dict]:
         """
-        Authenticate API key with caching
+        Authenticate API key with Neon PostgreSQL
 
         Returns:
             dict with client_id if valid, None if invalid
         """
-        # Check cache first
-        cache_key = f"{self.CACHE_KEY_PREFIX}{api_key}"
-        cached = self.redis.get(cache_key)
-
-        if cached:
-            # Cache hit - return immediately
-            return json.loads(cached)
-
-        # Cache miss - query database
         from models.api_key import APIKey
 
         # Get all active keys for this prefix (reduces search space)
@@ -1178,21 +1165,13 @@ class AuthService:
                 # Update last used timestamp (async, don't block request)
                 self.update_last_used_async(key_record.id)
 
-                # Cache the result
-                self.redis.setex(
-                    cache_key,
-                    self.CACHE_TTL_SECONDS,
-                    json.dumps(result)
-                )
-
                 return result
 
-        # Invalid key - cache negative result briefly (prevent brute force)
-        self.redis.setex(cache_key, 60, json.dumps(None))
+        # Invalid key
         return None
 
     def invalidate_key(self, key_id: int):
-        """Invalidate API key and clear cache"""
+        """Invalidate API key in Neon PostgreSQL"""
         from models.api_key import APIKey
         from datetime import datetime
 
@@ -1201,10 +1180,6 @@ class AuthService:
         if key_record:
             key_record.invalidated_at = datetime.utcnow()
             self.db.commit()
-
-            # Clear from cache (invalidate all possible cache entries)
-            # Note: We can't reconstruct the full key, so we rely on TTL expiration
-            # Alternative: Store key_id in cache value and scan/delete
 
     def update_last_used_async(self, key_id: int):
         """Update last_used_at timestamp (background task)"""
@@ -1289,18 +1264,18 @@ async def create_api_key(
 
 ### Rationale
 
-- **bcrypt over argon2**: Simpler, widely supported, sufficient for API keys (not interactive passwords), ~100ms verification acceptable for API auth
+- **bcrypt over argon2**: Simpler, widely supported, sufficient for API keys (not interactive passwords), ~100ms verification acceptable
 - **256-bit keys**: OWASP recommendation, cryptographically strong, future-proof
-- **Redis caching**: 99% cache hit rate expected, reduces database load, sub-millisecond validation
+- **Neon connection pooling**: Handles high concurrency without additional caching layer
 - **Prefix indexing**: Limits bcrypt comparisons to ~1-10 candidates instead of all keys, improves performance
-- **5-minute TTL**: Balances performance (fewer DB queries) with security (timely invalidation)
+- **Direct database queries**: Simpler architecture, Neon provides excellent performance
 
 ### Alternatives Considered
 
-- **Argon2**: More secure but overkill for API keys, higher memory usage (concern on 8GB VPS), less mature Python support
+- **argon2**: Marginally more secure but 100ms bcrypt sufficient for API keys
 - **scrypt**: Middle ground but no clear advantage over bcrypt for this use case
 - **JWT tokens**: Stateless but requires public/private key management, harder to invalidate, larger tokens
-- **Database-only validation**: Simpler but 10-50ms latency per request vs <1ms with cache
+- **Redis caching**: Adds complexity, Neon provides sufficient performance for API key validation
 
 ### References
 
@@ -1314,59 +1289,16 @@ async def create_api_key(
 
 ### Decision
 
-**Services**: api, celery-worker, celery-beat, postgres, redis
-**Health Checks**: pg_isready (PostgreSQL), redis-cli ping (Redis), Celery inspect ping (workers)
-**Restart Policy**: unless-stopped for all services (survive VPS reboots)
+**Services**: api only
+**Health Checks**: HTTP health endpoint for API
+**Restart Policy**: unless-stopped for API service (survive VPS reboots)
 
 **docker-compose.yml**:
 ```yaml
 version: '3.8'
 
 services:
-  # PostgreSQL database
-  postgres:
-    image: postgres:15-alpine
-    container_name: obsrv_postgres
-    restart: unless-stopped
-    environment:
-      POSTGRES_DB: obsrv
-      POSTGRES_USER: obsrv_user
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
-      POSTGRES_INITDB_ARGS: "-E UTF8 --locale=en_US.UTF-8"
-    volumes:
-      - postgres_data:/var/lib/postgresql/data
-      - ./init-scripts:/docker-entrypoint-initdb.d  # Schema initialization
-    ports:
-      - "127.0.0.1:5432:5432"  # Localhost only for security
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U obsrv_user -d obsrv"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-      start_period: 10s
-    networks:
-      - obsrv_network
-
-  # Redis - task queue and cache
-  redis:
-    image: redis:7-alpine
-    container_name: obsrv_redis
-    restart: unless-stopped
-    command: redis-server --appendonly yes --maxmemory 512mb --maxmemory-policy allkeys-lru
-    volumes:
-      - redis_data:/data
-    ports:
-      - "127.0.0.1:6379:6379"  # Localhost only
-    healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
-      interval: 5s
-      timeout: 3s
-      retries: 3
-      start_period: 5s
-    networks:
-      - obsrv_network
-
-  # FastAPI application
+  # FastAPI application only
   api:
     build:
       context: .
@@ -1375,113 +1307,23 @@ services:
     container_name: obsrv_api
     restart: unless-stopped
     environment:
-      DATABASE_URL: postgresql://obsrv_user:${POSTGRES_PASSWORD}@postgres:5432/obsrv
-      REDIS_URL: redis://redis:6379/0
+      DATABASE_URL: ${NEON_DATABASE_URL}  # From Neon
+      INNGEST_EVENT_KEY: ${INNGEST_EVENT_KEY}
+      INNGEST_ENV: production
       API_HOST: 0.0.0.0
       API_PORT: 8000
       LOG_LEVEL: info
       ENVIRONMENT: production
     ports:
       - "8000:8000"
-    depends_on:
-      postgres:
-        condition: service_healthy
-      redis:
-        condition: service_healthy
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
       interval: 30s
       timeout: 10s
       retries: 3
       start_period: 40s
-    networks:
-      - obsrv_network
     volumes:
       - ./logs:/app/logs  # Persistent logs
-
-  # Celery worker - crawl tasks
-  celery-worker:
-    build:
-      context: .
-      dockerfile: Dockerfile
-      target: production
-    container_name: obsrv_celery_worker
-    restart: unless-stopped
-    command: celery -A src.tasks.celery_app worker --loglevel=info --concurrency=2 --max-tasks-per-child=50
-    environment:
-      DATABASE_URL: postgresql://obsrv_user:${POSTGRES_PASSWORD}@postgres:5432/obsrv
-      REDIS_URL: redis://redis:6379/0
-      LOG_LEVEL: info
-      ENVIRONMENT: production
-    depends_on:
-      postgres:
-        condition: service_healthy
-      redis:
-        condition: service_healthy
-    healthcheck:
-      test: ["CMD-SHELL", "celery -A src.tasks.celery_app inspect ping -d celery@$$HOSTNAME"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 30s
-    networks:
-      - obsrv_network
-    volumes:
-      - ./logs:/app/logs
-
-  # Celery beat - scheduled tasks
-  celery-beat:
-    build:
-      context: .
-      dockerfile: Dockerfile
-      target: production
-    container_name: obsrv_celery_beat
-    restart: unless-stopped
-    command: celery -A src.tasks.celery_app beat --loglevel=info
-    environment:
-      DATABASE_URL: postgresql://obsrv_user:${POSTGRES_PASSWORD}@postgres:5432/obsrv
-      REDIS_URL: redis://redis:6379/0
-      LOG_LEVEL: info
-      ENVIRONMENT: production
-    depends_on:
-      postgres:
-        condition: service_healthy
-      redis:
-        condition: service_healthy
-    networks:
-      - obsrv_network
-    volumes:
-      - ./logs:/app/logs
-
-  # Flower - Celery monitoring (optional for production)
-  flower:
-    build:
-      context: .
-      dockerfile: Dockerfile
-      target: production
-    container_name: obsrv_flower
-    restart: unless-stopped
-    command: celery -A src.tasks.celery_app flower --port=5555
-    environment:
-      DATABASE_URL: postgresql://obsrv_user:${POSTGRES_PASSWORD}@postgres:5432/obsrv
-      REDIS_URL: redis://redis:6379/0
-    ports:
-      - "127.0.0.1:5555:5555"  # Localhost only
-    depends_on:
-      redis:
-        condition: service_healthy
-    networks:
-      - obsrv_network
-
-networks:
-  obsrv_network:
-    driver: bridge
-
-volumes:
-  postgres_data:
-    driver: local
-  redis_data:
-    driver: local
 ```
 
 **Dockerfile** (multi-stage for optimization):
@@ -1496,7 +1338,6 @@ WORKDIR /build
 # Install build dependencies
 RUN apt-get update && apt-get install -y \
     gcc \
-    postgresql-client \
     && rm -rf /var/lib/apt/lists/*
 
 # Install Python dependencies
@@ -1513,7 +1354,6 @@ WORKDIR /app
 # Install runtime dependencies
 RUN apt-get update && apt-get install -y \
     curl \
-    postgresql-client \
     && rm -rf /var/lib/apt/lists/*
 
 # Install Playwright browsers (for crawl4ai)
@@ -1541,8 +1381,12 @@ CMD ["uvicorn", "src.api.main:app", "--host", "0.0.0.0", "--port", "8000"]
 
 **.env.example**:
 ```bash
-# PostgreSQL
-POSTGRES_PASSWORD=change_me_in_production
+# Neon PostgreSQL
+NEON_DATABASE_URL=postgresql://user:password@host/database?sslmode=require
+
+# Inngest
+INNGEST_EVENT_KEY=your_inngest_event_key
+INNGEST_ENV=production
 
 # API Configuration
 API_HOST=0.0.0.0
@@ -1573,20 +1417,17 @@ if [ ! -f .env ]; then
     exit 1
 fi
 
-# Pull latest images
-docker-compose pull
-
 # Build application
 docker-compose build --no-cache
 
-# Run database migrations
+# Run database migrations (against Neon)
 docker-compose run --rm api alembic upgrade head
 
-# Start services
+# Start API service
 docker-compose up -d
 
 # Wait for health checks
-echo "Waiting for services to become healthy..."
+echo "Waiting for API to become healthy..."
 sleep 10
 
 # Check health
@@ -1594,25 +1435,24 @@ docker-compose ps
 
 echo "Deployment complete!"
 echo "API: http://localhost:8000"
-echo "Flower: http://localhost:5555"
+echo "Inngest Functions: https://app.inngest.com/"
 ```
 
 ### Rationale
 
-- **service_healthy conditions**: Ensures database and Redis are ready before starting dependent services, prevents startup race conditions
+- **Single service architecture**: Eliminates container orchestration complexity, reduces resource usage
 - **unless-stopped restart policy**: Survives VPS reboots, recovers from crashes, but allows manual stops
-- **Localhost-only ports**: PostgreSQL and Redis not exposed externally, reduces attack surface
-- **Alpine images**: Smaller image size (~50MB vs 200MB), faster pulls, lower disk usage
+- **Managed services**: Neon and Inngest handle scaling, backups, and high availability
 - **Multi-stage Dockerfile**: Separates build and runtime dependencies, reduces final image size by 40%
-- **Named volumes**: Data persists across container recreations, enables easy backups
-- **Health checks**: Enables rolling updates, load balancer integration, automated recovery
+- **Health checks**: Enables automated recovery and monitoring
+- **Simplified deployment**: No need to manage multiple interconnected services
 
 ### Alternatives Considered
 
-- **Docker Swarm/Kubernetes**: Overkill for single-VPS MVP, adds operational complexity
-- **Separate containers for each Celery queue**: Over-optimization for MVP scale, complicates deployment
-- **Host networking**: Simpler but less isolated, harder to manage port conflicts
-- **Docker secrets**: More secure but requires Swarm mode, plain env vars acceptable for MVP
+- **Full container orchestration**: Kubernetes/Docker Swarm overkill for single service
+- **Local PostgreSQL**: Requires manual maintenance, backup, and scaling
+- **Celery on VPS**: Resource intensive, complex worker management
+- **Multiple API instances**: Unnecessary for MVP scale, adds complexity
 
 ### References
 
@@ -1629,19 +1469,19 @@ echo "Flower: http://localhost:5555"
 | **URL Normalization** | `url-normalize` + `w3lib` | Industry-proven, 4M downloads/month, robust tracking param removal | Requires two libraries instead of stdlib only |
 | **Product ID Extraction** | Domain-specific regex + HTML fallback | High accuracy for known platforms, graceful degradation | Manual pattern maintenance per platform |
 | **crawl4ai Strategy** | AsyncPlaywrightCrawlerStrategy with static HTML | Future-proof for JS rendering, resource-constrained config | Higher baseline resource usage than requests+BS4 |
-| **Celery Scheduling** | Database-backed Beat + crontab schedules | Runtime schedule updates, intuitive time-based configs | Added complexity vs hardcoded schedules |
-| **Task Retries** | Exponential backoff, 3 retries, 60s initial delay | Handles transient failures, prevents endpoint overwhelm | Delayed final failure detection (up to 7 minutes) |
-| **Workflow Patterns** | Chain + Group + Chord | Clear dependencies, parallel execution, robust failure handling | More complex than simple task chaining |
+| **Inngest Functions** | Step-based durable functions | Automatic retries, event-driven execution, serverless scaling | Vendor dependency vs self-hosted Celery |
+| **Function Retries** | Built-in exponential backoff, configurable | Handles transient failures, prevents endpoint overwhelm | Up to 2-hour function timeout |
+| **Workflow Patterns** | Step functions with fan-out | Clear dependencies, parallel execution, durable state | Event-driven vs imperative task chaining |
 | **HMAC Signatures** | Stripe pattern (timestamp + versioned signature) | Replay attack protection, versioning, familiar to developers | Slightly larger headers than simple HMAC |
 | **Secret Rotation** | Dual-key grace period (1 hour) | Zero-downtime rotation, client-friendly | Added complexity in verification logic |
 | **JSONB Indexing** | jsonb_path_ops GIN indexes | 78% smaller indexes, 8% faster queries | Less flexible than jsonb_ops (containment only) |
 | **Schema Design** | Hybrid relational + JSONB | Fast queries on structured fields, flexible for variable data | More complex schema than pure JSONB |
-| **Partitioning** | Monthly time-based partitioning | Optimal for time-series, efficient retention, partition pruning | Requires partition management automation |
-| **Data Retention** | DROP PARTITION + aggregated stats | 1000x faster than DELETE, instant disk space release | Less granular than row-level retention |
+| **Neon Partitioning** | Managed time-based partitioning | Automatic lifecycle management, efficient retention | Less control than self-managed PostgreSQL |
+| **Data Retention** | Neon automated cleanup + aggregated stats | Serverless maintenance, instant operations | Managed service dependency |
 | **API Key Hashing** | bcrypt work factor 12 | Proven security, 100ms verification acceptable, simple | Slower than argon2id for same security level |
 | **Key Generation** | 256-bit secrets.token_urlsafe | OWASP recommendation, cryptographically strong | Longer keys than 128-bit alternatives |
-| **Auth Caching** | Redis 5-minute TTL | 99% cache hit rate, sub-ms validation | 5-minute delay for key invalidation |
-| **Docker Services** | 5 containers (api, worker, beat, postgres, redis) | Clear separation, independent scaling, health checks | More complex than monolithic container |
+| **Auth Strategy** | Direct Neon queries | Simpler architecture, connection pooling | No caching layer vs Redis approach |
+| **Docker Services** | 1 container (api only) | Simplified deployment, reduced resource usage | Less service isolation than multi-container |
 | **Health Checks** | pg_isready, redis-cli ping, Celery inspect | Reliable service readiness detection, enables automation | Added startup time (~30s) |
 | **Restart Policy** | unless-stopped | Survives reboots, allows manual control | Can mask underlying issues if auto-restarting frequently |
 
@@ -1650,15 +1490,16 @@ echo "Flower: http://localhost:5555"
 ## Implementation Priority
 
 **Phase 1 - Core Infrastructure** (Week 1):
-1. Docker Compose setup with PostgreSQL, Redis
-2. Database schema and migrations (Alembic)
-3. API key generation and authentication
-4. Basic FastAPI routes with health checks
+1. Docker Compose setup (API only)
+2. Neon PostgreSQL setup and migrations (Alembic)
+3. Inngest account setup and function registration
+4. API key generation and authentication
+5. Basic FastAPI routes with health checks
 
 **Phase 2 - Crawling Foundation** (Week 2):
 1. URL normalization and product ID extraction
 2. crawl4ai integration with rate limiting
-3. Basic Celery tasks for crawling
+3. Basic Inngest functions for crawling
 4. Product discovery workflow
 
 **Phase 3 - Monitoring Logic** (Week 3):
@@ -1668,8 +1509,8 @@ echo "Flower: http://localhost:5555"
 4. Notification delivery with retries
 
 **Phase 4 - Operations** (Week 4):
-1. Celery Beat scheduling
-2. Data retention and cleanup tasks
+1. Inngest cron scheduling
+2. Data retention and cleanup functions
 3. Monitoring and logging
 4. Deployment automation
 

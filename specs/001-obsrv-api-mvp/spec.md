@@ -3,7 +3,7 @@
 **Feature Branch**: `001-obsrv-api-mvp`
 **Created**: 2025-11-02
 **Status**: Draft
-**Input**: User description: "Generate comprehensive specifications for the Obsrv API - a low-cost e-commerce monitoring system hosted on a single VPS. Project Overview: Company: Obsrv - software agency for market research via competitor data monitoring; Core functionality: Monitor any e-commerce websites, save daily data, send webhook notifications to our clients ERPs; Deployment constraints: Monolith architecture, single VPS hosting, for minimal costs; Target: MVP with simple infrastructure. Architecture Requirements: Single VPS with Docker Compose stack; FastAPI (Python) for REST APIs; Worker: Celery + crawl4ai for daily product data collection; Database: PostgreSQL for products, history, and crawl logs; Cache/Queue: Redis for Celery tasks and caching; Website registration and monitoring setup; Daily automated crawling with crawl4ai; Price/stock change detection; Historical data tracking; Authentication is managed via API Key, that can be invalidated on demand. Technical Constraints: JSONB storage for flexible crawl results; Celery Bea"
+**Input**: User description: "Generate comprehensive specifications for the Obsrv API - a low-cost e-commerce monitoring system hosted on a single VPS with managed services. Project Overview: Company: Obsrv - software agency for market research via competitor data monitoring; Core functionality: Monitor any e-commerce websites, save daily data, send webhook notifications to our clients ERPs; Deployment constraints: Monolith architecture, single VPS hosting + managed services, for minimal costs; Target: MVP with simple infrastructure. Architecture Requirements: Single VPS with Docker Compose stack; FastAPI (Python) for REST APIs; Background Tasks: Inngest for daily product data collection; Database: Neon PostgreSQL for products, history, and crawl logs; Website registration and monitoring setup; Daily automated crawling with crawl4ai; Price/stock change detection; Historical data tracking; Authentication is managed via API Key, that can be invalidated on demand. Technical Constraints: JSONB storage for flexible crawl results; Inngest functions for background processing"
 
 ## Clarifications
 
@@ -159,9 +159,9 @@ System administrators and clients need visibility into crawl execution status, s
 - **FR-019**: System MUST implement crawl error handling including network timeouts, HTTP errors, and parsing failures with appropriate retries
 - **FR-020**: System MUST provide API endpoints to query crawl logs and execution status for monitoring and debugging
 - **FR-021**: System MUST respect website crawling etiquette including configurable delays between requests and proper User-Agent headers
-- **FR-022**: System MUST isolate crawl tasks from API request handling to prevent blocking operations
-- **FR-023**: System MUST support concurrent crawling of multiple websites with resource limits to prevent system overload
-- **FR-024**: System MUST handle graceful shutdown ensuring in-progress crawls complete or are safely rolled back
+- **FR-022**: System MUST isolate crawl tasks from API request handling using Inngest serverless functions to prevent blocking operations
+- **FR-023**: System MUST support concurrent crawling of multiple websites with Inngest's built-in resource management and scaling
+- **FR-024**: System MUST handle graceful shutdown ensuring in-progress crawls complete or are safely rolled back via Inngest's durable execution
 - **FR-025**: System MUST provide API endpoints for API key generation returning cryptographically secure keys
 - **FR-026**: System MUST store API keys securely using one-way hashing, never storing plaintext keys
 - **FR-027**: System MUST provide API endpoints to list client's active API keys showing metadata without exposing full key values
@@ -198,7 +198,7 @@ System administrators and clients need visibility into crawl execution status, s
 - **SC-007**: Webhook delivery success rate exceeds 90% (including retries) for endpoints with proper availability
 - **SC-008**: Zero unauthorized access incidents - all API requests without valid keys are rejected
 - **SC-009**: Crawl error rate remains below 5% (excluding errors caused by target website downtime)
-- **SC-010**: System handles at least 10 concurrent monitored websites with daily crawling without resource exhaustion
+- **SC-010**: System handles at least 10 concurrent monitored websites with daily crawling using Inngest's serverless scaling
 - **SC-011**: Historical data retrieval provides complete audit trail - 100% of crawl snapshots are preserved and queryable
 - **SC-012**: Clients can invalidate compromised API keys and verify access is blocked within 1 minute
 
@@ -208,11 +208,11 @@ System administrators and clients need visibility into crawl execution status, s
 - Target websites do not employ aggressive anti-bot measures that require sophisticated bypass techniques
 - Clients will provide webhook endpoints with reasonable availability (>95% uptime)
 - Daily monitoring frequency is sufficient for MVP - real-time or hourly monitoring is out of scope
-- Single VPS resources (assumed: 4 CPU cores, 8GB RAM, 100GB storage) are adequate for monitoring up to 20 websites with 100 products each with 90-day retention (estimated: 360MB for historical snapshots + overhead)
+- Single VPS resources (assumed: 1 CPU core, 4GB RAM, 50GB storage) are adequate for API layer, with Inngest handling background processing and Neon managing data storage
 - Clients are responsible for ensuring they have legal right to monitor competitor websites in their jurisdiction
 - Product identification on target websites is stable (URLs or SKUs don't change frequently)
 - Network bandwidth for VPS is sufficient for daily crawls (estimated: <1GB daily traffic for 20 websites)
-- PostgreSQL and Redis are adequate for MVP scale without requiring distributed database setup
+- Neon PostgreSQL provides adequate scaling and Inngest handles background processing without requiring distributed setup
 - Crawl extraction logic will require manual configuration per website (automated extraction learning is out of scope for MVP)
 
 ### Dependencies
@@ -221,6 +221,8 @@ System administrators and clients need visibility into crawl execution status, s
 - Client ERP systems or webhook receivers must be accessible from VPS network (no VPN required)
 - DNS resolution must be reliable for target website URLs
 - Container orchestration platform (Docker Compose) must be properly configured on VPS
+- Neon PostgreSQL account and database connection string must be configured
+- Inngest account and event key must be configured for background processing
 - SSL/TLS certificates for API endpoints if HTTPS is required (recommended for production)
 - Time synchronization (NTP) for accurate timestamp consistency across system components
 
@@ -230,7 +232,7 @@ System administrators and clients need visibility into crawl execution status, s
 - JavaScript rendering for dynamic websites (only static HTML extraction)
 - CAPTCHA solving or sophisticated anti-bot bypass mechanisms
 - Automated extraction logic learning (requires manual configuration per website)
-- Multi-region deployment or high availability setup (single VPS only)
+- Multi-region deployment or high availability setup (single VPS for API, managed services for data/processing)
 - Built-in analytics dashboard or visualization (clients consume data via API/webhooks)
 - User interface for non-technical users (API-only system)
 - Support for monitoring websites requiring authentication/login
@@ -240,33 +242,37 @@ System administrators and clients need visibility into crawl execution status, s
 - Monitoring of product reviews, ratings, or seller information (price and stock only)
 - Compliance with data privacy regulations specific to certain jurisdictions (client responsibility)
 - Automatic crawl logic adjustment when website structure changes (requires manual update)
+- Database administration and backup management (handled by Neon)
+- Background task queue management and monitoring (handled by Inngest)
 
 ## Constraints
 
 ### Technical Constraints
 
-- Single VPS deployment - no distributed architecture or horizontal scaling in MVP
-- Monolithic application architecture with all components on one host
-- Container-based deployment using Docker Compose for service orchestration
-- Limited computational resources constrain maximum number of monitored websites and crawl parallelism
-- Daily crawl frequency as baseline (higher frequencies increase resource requirements)
-- Storage growth is linear with (number of products × crawl frequency × retention period)
+- Single VPS deployment for API layer - background processing handled by Inngest serverless functions
+- Monolithic application architecture for API components on single host
+- Container-based deployment using Docker Compose for API service orchestration
+- Managed Neon PostgreSQL handles data storage, partitioning, and scaling automatically
+- Inngest serverless functions handle crawl parallelism and resource management
+- Daily crawl frequency as baseline (higher frequencies managed by Inngest's scaling)
+- Storage growth managed by Neon's partitioning and retention policies
 - Network bandwidth limitations may constrain crawl parallelism for media-heavy websites
 
 ### Operational Constraints
 
 - Manual deployment and configuration (no automated CI/CD pipeline in MVP)
 - Manual crawl extraction logic configuration for each new website
-- Limited observability - basic logging without sophisticated monitoring platform
-- Single point of failure - VPS downtime means complete system unavailability
-- Backup and disaster recovery require manual procedures
+- Enhanced observability through Inngest dashboard and Neon monitoring
+- Single point of failure for API layer - VPS downtime affects API availability (background processing continues via Inngest)
+- Backup and disaster recovery handled by Neon and Inngest managed services
 - Performance tuning requires application restart (no dynamic reconfiguration)
-- Crawl scheduling changes require system configuration updates
+- Crawl scheduling managed through Inngest function configuration
 
 ### Business Constraints
 
-- MVP budget constraints necessitate single VPS hosting model
+- MVP budget constraints necessitate single VPS + managed services model
 - Limited support resources mean system must be operationally simple
 - Time-to-market pressure prioritizes core functionality over advanced features
 - Target market is small-to-medium businesses with cost sensitivity
 - Competitive pressure requires rapid MVP validation before investing in scalable architecture
+- Managed services (Neon, Inngest) provide enterprise-grade reliability at lower operational cost
