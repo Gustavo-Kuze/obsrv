@@ -47,15 +47,15 @@ Based on plan.md, this is a backend-only project with the following structure:
 - [X] T009 Configure Alembic migrations framework in backend/alembic/ with env.py and initial migration structure
 - [X] T010 Create database schema migration for all entities in backend/alembic/versions/001_initial_schema.py based on data-model.md (clients, api_keys, monitored_websites, products, product_history, crawl_execution_logs, webhook_delivery_logs, product_statistics)
 - [X] T011 [P] Implement API key authentication middleware in backend/src/core/auth.py with bcrypt verification and rate limiting
-- [ ] T012 [P] Setup FastAPI application factory in backend/src/api/main.py with CORS, error handlers, middleware registration
+- [X] T012 [P] Setup FastAPI application factory in backend/src/api/main.py with CORS, error handlers, middleware registration
 - [X] T013 [P] Create base Pydantic models and response schemas in backend/src/models/base.py (BaseModel, TimestampMixin, PaginationResponse, ErrorResponse)
 - [X] T014 [P] Implement centralized error handling and custom exceptions in backend/src/core/exceptions.py (APIException, AuthenticationError, ValidationError, ResourceNotFoundError)
 - [X] T015 [P] Configure structured logging with correlation IDs in backend/src/core/logging.py
 - [X] T016 [P] Setup environment configuration management in backend/src/core/config.py using Pydantic Settings
-- [ ] T017 [P] Implement health check endpoints in backend/src/api/health.py (basic /health, detailed /health/detailed with database and Inngest connectivity checks)
-- [ ] T018 Setup Inngest client configuration in backend/src/core/inngest.py with event key and signing key
-- [ ] T019 [P] Create URL normalization utility in backend/src/core/url_utils.py using url-normalize and w3lib for tracking parameter removal
-- [ ] T020 [P] Create product ID extraction utility in backend/src/core/product_extractors.py with platform-specific patterns (Amazon, Shopify, generic) and HTML meta tag fallbacks
+- [X] T017 [P] Implement health check endpoints in backend/src/api/health.py (basic /health, detailed /health/detailed with database and Inngest connectivity checks)
+- [X] T018 Setup Inngest client configuration in backend/src/core/inngest.py with event key and signing key
+- [X] T019 [P] Create URL normalization utility in backend/src/core/url_utils.py using url-normalize and w3lib for tracking parameter removal
+- [X] T020 [P] Create product ID extraction utility in backend/src/core/product_extractors.py with platform-specific patterns (Amazon, Shopify, generic) and HTML meta tag fallbacks
 
 **Checkpoint**: Foundation ready - user story implementation can now begin in parallel
 
