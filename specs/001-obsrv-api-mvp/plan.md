@@ -1,40 +1,31 @@
 # Implementation Plan: Obsrv API - E-commerce Monitoring System MVP
 
-**Branch**: `001-obsrv-api-mvp` | **Date**: 2025-11-02 | **Spec**: [spec.md](./spec.md)
+**Branch**: `001-obsrv-api-mvp` | **Date**: 2025-11-03 | **Spec**: specs/001-obsrv-api-mvp/spec.md
 **Input**: Feature specification from `/specs/001-obsrv-api-mvp/spec.md`
 
 **Note**: This template is filled in by the `/speckit.plan` command. See `.specify/templates/commands/plan.md` for the execution workflow.
 
 ## Summary
 
-The Obsrv API is a low-cost e-commerce monitoring system that tracks competitor product prices and stock status across multiple websites. The system performs daily automated crawls, detects changes, and sends webhook notifications to client ERP systems. Built as a monolithic application deployed on a single VPS using Docker Compose, it supports up to 20 monitored websites with 100 products each. Key capabilities include: hybrid product discovery from seed URLs, configurable price change thresholds (1% default), HMAC-authenticated webhooks, 90-day historical data retention, and API key-based authentication.
+The Obsrv API enables clients to monitor competitor e-commerce websites for price and stock changes, receiving automated webhook notifications to their ERPs. The system supports website registration, product discovery, daily automated crawling using crawl4ai, data storage in Neon PostgreSQL, background processing with Inngest, and REST API access via FastAPI. Deployed as a monolithic application on a single VPS using Docker Compose for orchestration, with managed services for scalability and cost efficiency.
 
 ## Technical Context
 
-**Language/Version**: Python 3.11+
-**Primary Dependencies**: FastAPI (REST API), Inngest (background tasks), crawl4ai (web crawling), Neon PostgreSQL (primary storage), Docker Compose (orchestration)
-**Storage**: Neon PostgreSQL with JSONB for flexible crawl data
-**Testing**: pytest with pytest-asyncio, httpx for API testing
-**Target Platform**: Linux VPS (single server, Docker Compose deployment) + managed services
-**Project Type**: Web/API backend (monolithic architecture) with serverless background processing
-**Performance Goals**: 95% crawl success rate, <2s API response for 90-day historical queries, process 100 products across 20 websites within 30 minutes
-**Constraints**: Single VPS (1 CPU, 4GB RAM, 50GB storage) + Neon + Inngest, <10 minute webhook delivery latency, 99% API uptime, daily crawl frequency baseline (2-4x per day configurable)
-**Scale/Scope**: MVP supporting 10-20 monitored websites, 100 products per website, 90-day retention (360MB estimated storage), 35 functional requirements, 5 prioritized user stories
+**Language/Version**: Python 3.11+  
+**Primary Dependencies**: FastAPI (REST API), Inngest (background tasks), crawl4ai (web crawling)  
+**Storage**: Neon PostgreSQL (managed database service)  
+**Testing**: pytest (standard Python testing framework)  
+**Target Platform**: Linux server (single VPS deployment)  
+**Project Type**: Web backend API (no frontend UI)  
+**Performance Goals**: API response times <2s for historical queries, process 100 products in <30min during daily crawl, 95% successful crawls, 99% API uptime  
+**Constraints**: Single VPS resources (1 CPU core, 4GB RAM, 50GB storage), monolithic architecture, daily crawl frequency, respectful crawling etiquette  
+**Scale/Scope**: 10 concurrent monitored websites, 100 products per website, 90 days historical data retention
 
 ## Constitution Check
 
 *GATE: Must pass before Phase 0 research. Re-check after Phase 1 design.*
 
-**Status**: Constitution file contains template placeholders only. No project-specific principles defined yet. Proceeding with best practices for Python API development:
-
-- ✅ **Clear separation of concerns**: API layer (FastAPI), business logic (services), data access (repositories), background tasks (Inngest)
-- ✅ **Testability**: pytest with clear unit/integration/contract test boundaries
-- ✅ **Observability**: Structured logging with correlation IDs, health check endpoints
-- ✅ **Security**: API key authentication, HMAC webhook signatures, hashed credentials
-- ✅ **Simplicity**: Monolithic MVP architecture, avoid premature optimization
-- ⚠️ **Documentation**: OpenAPI schema auto-generation, deployment quickstart required
-
-**Recommendation**: After MVP validation, codify successful patterns into project constitution.
+Constitution file (.specify/memory/constitution.md) is currently a template with no specific principles defined. Assuming compliance with standard development practices. No violations identified.
 
 ## Project Structure
 
@@ -53,94 +44,30 @@ specs/[###-feature]/
 ### Source Code (repository root)
 
 ```text
-src/
-├── api/                    # FastAPI application
-│   ├── routes/            # REST endpoints
-│   │   ├── websites.py    # Website registration & management
-│   │   ├── products.py    # Product queries & history
-│   │   ├── auth.py        # API key management
-│   │   └── health.py      # Health check endpoints
-│   ├── dependencies.py    # DI (database, auth)
-│   ├── middleware.py      # Request logging, CORS, auth
-│   └── main.py           # FastAPI app initialization
-│
-├── models/                # SQLAlchemy ORM models
-│   ├── client.py         # Client account
-│   ├── website.py        # Monitored website
-│   ├── product.py        # Product & product history
-│   ├── crawl_log.py      # Crawl execution log
-│   ├── webhook_log.py    # Webhook delivery log
-│   └── api_key.py        # API key authentication
-│
-├── services/              # Business logic layer
-│   ├── website_service.py      # Website registration, product discovery
-│   ├── crawl_service.py        # Crawl orchestration & execution
-│   ├── product_service.py      # Product identification, change detection
-│   ├── notification_service.py # Webhook delivery with HMAC
-│   ├── auth_service.py         # API key generation, validation
-│   └── history_service.py      # Historical data queries, retention
-│
-├── functions/             # Inngest background functions
-│   ├── crawl_functions.py    # Scheduled/on-demand crawls
-│   ├── discovery_functions.py # Product discovery from seed URLs
-│   ├── notification_functions.py # Webhook delivery with retries
-│   └── maintenance_functions.py  # Data retention, cleanup
-│
-├── crawlers/              # Web crawling logic
-│   ├── base_crawler.py   # Abstract crawler with crawl4ai
-│   ├── product_extractor.py # URL normalization, SKU extraction
-│   ├── discovery_crawler.py  # Seed URL → product list
-│   └── platform_adapters/    # E-commerce platform specific logic
-│       └── generic.py    # Generic HTML extraction (MVP)
-│
-├── schemas/               # Pydantic models (API contracts)
-│   ├── website.py        # Website registration, configuration
-│   ├── product.py        # Product data, history queries
-│   ├── webhook.py        # Webhook payload format
-│   └── auth.py           # API key schemas
-│
-├── repositories/          # Data access layer
-│   ├── website_repo.py
-│   ├── product_repo.py
-│   ├── crawl_log_repo.py
-│   └── webhook_log_repo.py
-│
-├── utils/                 # Shared utilities
-│   ├── url_normalizer.py # URL cleaning, product ID extraction
-│   ├── hmac_signer.py    # Webhook signature generation/verification
-│   ├── logger.py         # Structured logging setup
-│   └── config.py         # Environment configuration
-│
-└── db/                    # Database setup
-    ├── session.py        # SQLAlchemy session management for Neon
-    ├── migrations/       # Alembic migrations
-    └── seed.py           # Development seed data
+backend/
+├── src/
+│   ├── models/          # Data models and schemas
+│   ├── services/        # Business logic and integrations
+│   ├── api/             # FastAPI routes and endpoints
+│   └── core/            # Configuration and shared utilities
+└── tests/
+    ├── unit/            # Unit tests for individual components
+    ├── integration/     # Integration tests for API endpoints
+    └── contract/        # Contract tests for external dependencies
 
+# Shared testing utilities
 tests/
-├── contract/             # OpenAPI contract validation
-│   └── test_api_contracts.py
-├── integration/          # Multi-component tests
-│   ├── test_crawl_flow.py       # Registration → discovery → crawl
-│   ├── test_notification_flow.py # Change → webhook delivery
-│   └── test_auth_flow.py         # API key lifecycle
-└── unit/                 # Isolated component tests
-    ├── services/
-    ├── crawlers/
-    ├── repositories/
-    └── utils/
-
-docker-compose.yml        # Orchestration: API only
-Dockerfile               # Application container image
-alembic.ini              # Database migration config
-pyproject.toml           # Python dependencies (Poetry)
-pytest.ini               # Test configuration
-.env.example             # Environment variables template
+├── fixtures/            # Test data and mocks
+└── utils/               # Testing helpers
 ```
 
-**Structure Decision**: Monolithic web API backend using layered architecture. Clear separation between API layer (FastAPI routes), business logic (services), data access (repositories), and background processing (Inngest functions). Crawling logic isolated in dedicated module with platform adapters for extensibility. This structure supports the MVP scope while enabling future modularization if needed.
+**Structure Decision**: Selected backend-only structure since this is an API-only system with no frontend UI. Follows standard Python FastAPI project layout with clear separation of models, services, and API layers. Tests are organized by type with shared fixtures in root tests/ directory.
 
 ## Complexity Tracking
 
 > **Fill ONLY if Constitution Check has violations that must be justified**
 
-No violations identified. Architecture follows established FastAPI/Inngest patterns appropriate for the problem domain.
+| Violation | Why Needed | Simpler Alternative Rejected Because |
+|-----------|------------|-------------------------------------|
+| [e.g., 4th project] | [current need] | [why 3 projects insufficient] |
+| [e.g., Repository pattern] | [specific problem] | [why direct DB access insufficient] |
