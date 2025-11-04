@@ -19,8 +19,15 @@ from backend.src.core.config import settings
 from backend.src.core.database import Base
 
 # Import all models to ensure they're registered with Base.metadata
-# This will be populated as we create models
-# from backend.src.models import client, api_key, website, product, ...
+from backend.src.models import (  # noqa: F401
+    api_key,
+    client,
+    crawl_log,
+    product,
+    product_history,
+    webhook_log,
+    website,
+)
 
 # Alembic Config object
 config = context.config

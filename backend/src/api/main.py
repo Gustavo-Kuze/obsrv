@@ -294,11 +294,15 @@ def register_routes(app: FastAPI) -> None:
     # Health check routes (no /v1 prefix)
     app.include_router(health_router)
 
-    # API v1 routes will be added here as they're implemented
-    # Example:
-    # app.include_router(websites_router, prefix="/v1")
-    # app.include_router(products_router, prefix="/v1")
-    # app.include_router(auth_router, prefix="/v1")
+    # API v1 routes
+    from backend.src.api.routes.auth import router as auth_router
+    from backend.src.api.routes.websites import router as websites_router
+
+    app.include_router(auth_router)
+    app.include_router(websites_router)
+
+    # Additional routes will be added here as they're implemented
+    # app.include_router(products_router)
 
     logger.info("Routes registered")
 

@@ -59,8 +59,8 @@ class APIKey(Base):
         default=lambda: ["read", "write"],
     )
 
-    # Relationships (will be populated when Client model is created)
-    # client: Mapped["Client"] = relationship("Client", back_populates="api_keys")
+    # Relationships
+    client: Mapped["Client"] = relationship("Client", back_populates="api_keys")
 
     def __repr__(self) -> str:
         return f"<APIKey(id={self.id}, prefix={self.key_prefix}, client_id={self.client_id})>"

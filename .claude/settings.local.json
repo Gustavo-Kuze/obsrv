@@ -6,7 +6,8 @@
       "Bash(powershell -File:*)",
       "Bash(powershell:*)",
       "WebSearch",
-      "Bash(test:*)"
+      "Bash(test:*)",
+      "Bash(python:*)"
     ],
     "deny": [],
     "ask": []

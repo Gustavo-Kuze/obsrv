@@ -69,29 +69,29 @@ Based on plan.md, this is a backend-only project with the following structure:
 
 ### Implementation for User Story 1
 
-- [ ] T021 [P] [US1] Create Client entity model in backend/src/models/client.py with SQLAlchemy ORM mapping (matches data-model.md Client Account)
-- [ ] T022 [P] [US1] Create APIKey entity model in backend/src/models/api_key.py with SQLAlchemy ORM mapping and bcrypt hashing
-- [ ] T023 [P] [US1] Create MonitoredWebsite entity model in backend/src/models/website.py with status state machine (pending_approval → active → paused/failed)
-- [ ] T024 [P] [US1] Create Product entity model in backend/src/models/product.py with normalized_url indexing and stock status enum
-- [ ] T025 [P] [US1] Create CrawlExecutionLog entity model in backend/src/models/crawl_log.py with execution tracking fields
-- [ ] T026 [P] [US1] Create Pydantic request/response schemas for website registration in backend/src/api/schemas/website_schemas.py (WebsiteRegistrationRequest, WebsiteRegistrationResponse, Website, DiscoveredProduct)
-- [ ] T027 [US1] Implement crawl4ai integration service in backend/src/services/crawler_service.py with AsyncPlaywrightCrawlerStrategy, rate limiting (10 req/min per domain), retry logic (3 attempts with exponential backoff)
-- [ ] T028 [US1] Implement product discovery service in backend/src/services/discovery_service.py that extracts product links from seed URLs using common e-commerce patterns and ranks by relevance
-- [ ] T029 [US1] Implement baseline crawl service in backend/src/services/baseline_crawl_service.py that crawls approved products to establish initial data (price, stock, name)
-- [ ] T030 [US1] Create Inngest function for product discovery in backend/src/services/inngest_functions/discover_products.py that processes seed URLs and stores discovered products in pending state
-- [ ] T031 [US1] Create Inngest function for baseline crawl in backend/src/services/inngest_functions/baseline_crawl.py that crawls approved products and creates initial product records
-- [ ] T032 [US1] Implement WebsiteService in backend/src/services/website_service.py with methods: register_website(), get_website(), list_websites(), update_website(), delete_website()
-- [ ] T033 [US1] Implement POST /v1/websites endpoint in backend/src/api/routes/websites.py that accepts registration, validates URLs, triggers Inngest product discovery, returns 202 with website_id and discovery_job_id
-- [ ] T034 [US1] Implement GET /v1/websites endpoint in backend/src/api/routes/websites.py with pagination and status filtering
-- [ ] T035 [US1] Implement GET /v1/websites/{website_id} endpoint in backend/src/api/routes/websites.py with ownership validation
-- [ ] T036 [US1] Implement PATCH /v1/websites/{website_id} endpoint in backend/src/api/routes/websites.py for updating crawl frequency, threshold, webhook settings
-- [ ] T037 [US1] Implement DELETE /v1/websites/{website_id} endpoint in backend/src/api/routes/websites.py with cascade deletion of products and history
-- [ ] T038 [US1] Implement GET /v1/websites/{website_id}/discovered-products endpoint in backend/src/api/routes/websites.py that returns pending products with discovery ranking
-- [ ] T039 [US1] Implement POST /v1/websites/{website_id}/approve-products endpoint in backend/src/api/routes/websites.py that validates selection (max 100), triggers Inngest baseline crawl, updates website status to active
-- [ ] T040 [US1] Add API route registration in backend/src/api/main.py for websites router
-- [ ] T041 [US1] Add input validation for website registration (valid URLs, supported crawl frequencies, threshold ranges) in backend/src/api/schemas/website_schemas.py
-- [ ] T042 [US1] Add error handling for duplicate website registration (409 Conflict) in backend/src/services/website_service.py
-- [ ] T043 [US1] Add logging for website registration lifecycle events (registration, discovery start/complete, approval, baseline crawl) in relevant services
+- [X] T021 [P] [US1] Create Client entity model in backend/src/models/client.py with SQLAlchemy ORM mapping (matches data-model.md Client Account)
+- [X] T022 [P] [US1] Create APIKey entity model in backend/src/models/api_key.py with SQLAlchemy ORM mapping and bcrypt hashing
+- [X] T023 [P] [US1] Create MonitoredWebsite entity model in backend/src/models/website.py with status state machine (pending_approval → active → paused/failed)
+- [X] T024 [P] [US1] Create Product entity model in backend/src/models/product.py with normalized_url indexing and stock status enum
+- [X] T025 [P] [US1] Create CrawlExecutionLog entity model in backend/src/models/crawl_log.py with execution tracking fields
+- [X] T026 [P] [US1] Create Pydantic request/response schemas for website registration in backend/src/api/schemas/website_schemas.py (WebsiteRegistrationRequest, WebsiteRegistrationResponse, Website, DiscoveredProduct)
+- [X] T027 [US1] Implement crawl4ai integration service in backend/src/services/crawler_service.py with AsyncPlaywrightCrawlerStrategy, rate limiting (10 req/min per domain), retry logic (3 attempts with exponential backoff)
+- [X] T028 [US1] Implement product discovery service in backend/src/services/discovery_service.py that extracts product links from seed URLs using common e-commerce patterns and ranks by relevance
+- [X] T029 [US1] Implement baseline crawl service in backend/src/services/baseline_crawl_service.py that crawls approved products to establish initial data (price, stock, name)
+- [X] T030 [US1] Create Inngest function for product discovery in backend/src/services/inngest_functions/discover_products.py that processes seed URLs and stores discovered products in pending state
+- [X] T031 [US1] Create Inngest function for baseline crawl in backend/src/services/inngest_functions/baseline_crawl.py that crawls approved products and creates initial product records
+- [X] T032 [US1] Implement WebsiteService in backend/src/services/website_service.py with methods: register_website(), get_website(), list_websites(), update_website(), delete_website()
+- [X] T033 [US1] Implement POST /v1/websites endpoint in backend/src/api/routes/websites.py that accepts registration, validates URLs, triggers Inngest product discovery, returns 202 with website_id and discovery_job_id
+- [X] T034 [US1] Implement GET /v1/websites endpoint in backend/src/api/routes/websites.py with pagination and status filtering
+- [X] T035 [US1] Implement GET /v1/websites/{website_id} endpoint in backend/src/api/routes/websites.py with ownership validation
+- [X] T036 [US1] Implement PATCH /v1/websites/{website_id} endpoint in backend/src/api/routes/websites.py for updating crawl frequency, threshold, webhook settings
+- [X] T037 [US1] Implement DELETE /v1/websites/{website_id} endpoint in backend/src/api/routes/websites.py with cascade deletion of products and history
+- [X] T038 [US1] Implement GET /v1/websites/{website_id}/discovered-products endpoint in backend/src/api/routes/websites.py that returns pending products with discovery ranking
+- [X] T039 [US1] Implement POST /v1/websites/{website_id}/approve-products endpoint in backend/src/api/routes/websites.py that validates selection (max 100), triggers Inngest baseline crawl, updates website status to active
+- [X] T040 [US1] Add API route registration in backend/src/api/main.py for websites router
+- [X] T041 [US1] Add input validation for website registration (valid URLs, supported crawl frequencies, threshold ranges) in backend/src/api/schemas/website_schemas.py
+- [X] T042 [US1] Add error handling for duplicate website registration (409 Conflict) in backend/src/services/website_service.py
+- [X] T043 [US1] Add logging for website registration lifecycle events (registration, discovery start/complete, approval, baseline crawl) in relevant services
 
 **Checkpoint**: At this point, User Story 1 should be fully functional - clients can register websites, discover products, approve them, and have baseline data collected
 

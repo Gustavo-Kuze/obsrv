@@ -344,29 +344,42 @@ Interactive API documentation available at:
 
 ## Current Status
 
-⚠️ **MVP in Development**: Core infrastructure is fully implemented and ready for deployment! But the user stories are still in progress.
+✅ **CORE FUNCTIONALITY COMPLETE**: User Stories 1 & 2 ready for production!
 
-**Completed** (Ready to Deploy Now!):
+**Completed** (Ready to Use Now!):
 - ✅ Project setup and Docker configuration
 - ✅ Database schema and migrations (9 tables)
 - ✅ Authentication middleware with rate limiting
 - ✅ Structured logging and error handling
 - ✅ FastAPI application with CORS and middleware
 - ✅ Health check endpoints (basic, detailed, readiness, liveness)
+- ✅ **User Story 1: Website Registration & Product Discovery**
+  - Register e-commerce websites
+  - Automatic product discovery from seed URLs
+  - Product approval workflow (up to 100 products)
+  - Baseline data collection
+  - Full CRUD operations on websites
+- ✅ **User Story 2: Automated Change Notifications** (NEW!)
+  - Daily scheduled crawls (2 AM UTC)
+  - Price and stock change detection
+  - HMAC-authenticated webhook delivery
+  - Exponential backoff retry (3 attempts)
+  - Webhook secret rotation with grace period
+  - Comprehensive delivery tracking
 - ✅ Inngest integration for background tasks
 - ✅ URL normalization and product ID extraction
 - ✅ Complete documentation and deployment scripts
 
 **Next Steps** (User Story Implementation):
-- ⏳ User Story 1: Website registration and monitoring (23 tasks)
-- ⏳ User Story 2: Change detection and webhooks (16 tasks)
+- ✅ User Story 1: Website registration and monitoring (23 tasks) - **DONE**
+- ✅ User Story 2: Change detection and webhooks (16 tasks) - **DONE**
 - ⏳ User Story 3: Historical data queries (11 tasks)
 - ⏳ User Story 4: API key management (12 tasks)
 - ⏳ User Story 5: Crawl health monitoring (9 tasks)
 - ⏳ Data retention automation (5 tasks)
 - ⏳ Production optimization (12 tasks)
 
-**See PHASE2_COMPLETE.md for detailed status and next steps!**
+**See US1_COMPLETE.md and US2_COMPLETE.md for detailed testing guides!**
 
 ## License
 
